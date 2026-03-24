@@ -1,6 +1,303 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WorldForge World Configuration",
-  "description": "TODO: Full JSON Schema for world configuration validation",
-  "type": "object"
+  "type": "object",
+  "required": ["meta", "geography", "resources", "factions", "tech_tree", "event_pool", "character_rules", "initial_state"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["genre", "world_name", "simulation_years", "tick_duration_years", "seed", "chaos_level", "trope_subversion"],
+      "additionalProperties": false,
+      "properties": {
+        "genre": { "type": "string", "minLength": 1 },
+        "world_name": { "type": "string", "minLength": 1 },
+        "simulation_years": { "type": "integer", "minimum": 1 },
+        "tick_duration_years": { "type": "integer", "enum": [1, 5, 10] },
+        "seed": { "type": "integer" },
+        "chaos_level": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trope_subversion": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+
+    "geography": {
+      "type": "object",
+      "required": ["regions"],
+      "additionalProperties": false,
+      "properties": {
+        "regions": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "terrain", "habitability", "max_population", "resources", "connections"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^reg_" },
+              "name": { "type": "string", "minLength": 1 },
+              "terrain": { "type": "string", "minLength": 1 },
+              "habitability": { "type": "number", "minimum": 0, "maximum": 1 },
+              "max_population": { "type": "integer", "minimum": 1 },
+              "resources": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^res_" }
+              },
+              "connections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["target", "traversal_difficulty"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": { "type": "string", "pattern": "^reg_" },
+                    "traversal_difficulty": { "type": "number", "minimum": 0, "maximum": 1 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "rarity", "effects"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^res_" },
+          "name": { "type": "string", "minLength": 1 },
+          "rarity": { "type": "number", "minimum": 0, "maximum": 1 },
+          "effects": {
+            "type": "object",
+            "additionalProperties": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "factions": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "governance", "avg_lifespan", "cultural_traits", "attributes"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^fac_" },
+          "name": { "type": "string", "minLength": 1 },
+          "governance": { "type": "string", "minLength": 1 },
+          "avg_lifespan": { "type": "integer", "minimum": 1 },
+          "cultural_traits": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "attributes": {
+            "type": "object",
+            "required": ["aggressiveness", "cohesion", "expansionism", "power_affinity", "fertility", "adaptability"],
+            "additionalProperties": false,
+            "properties": {
+              "aggressiveness": { "type": "number", "minimum": 0, "maximum": 1 },
+              "cohesion": { "type": "number", "minimum": 0, "maximum": 1 },
+              "expansionism": { "type": "number", "minimum": 0, "maximum": 1 },
+              "power_affinity": { "type": "number", "minimum": 0, "maximum": 1 },
+              "fertility": { "type": "number", "minimum": 0, "maximum": 1 },
+              "adaptability": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "tech_tree": {
+      "type": "object",
+      "required": ["nodes"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "prerequisites", "unlock_difficulty", "effects"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^tech_" },
+              "name": { "type": "string", "minLength": 1 },
+              "prerequisites": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^tech_" }
+              },
+              "unlock_difficulty": { "type": "number", "minimum": 0, "maximum": 1 },
+              "effects": {
+                "type": "object",
+                "additionalProperties": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "event_pool": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "category", "is_black_swan", "base_probability", "preconditions", "consequences"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(evt_|bsw_)" },
+          "name": { "type": "string", "minLength": 1 },
+          "category": {
+            "type": "string",
+            "enum": ["conflict", "catastrophe", "discovery", "diplomacy", "internal", "migration"]
+          },
+          "is_black_swan": { "type": "boolean" },
+          "severity": { "type": "number", "minimum": 0, "maximum": 1 },
+          "base_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+          "preconditions": {
+            "type": "object",
+            "required": ["requires"],
+            "properties": {
+              "requires": { "type": "string", "minLength": 1 },
+              "min_attribute": {
+                "type": "object",
+                "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            }
+          },
+          "modifiers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["condition", "probability_bonus"],
+              "additionalProperties": false,
+              "properties": {
+                "condition": { "type": "string", "minLength": 1 },
+                "probability_bonus": { "type": "number" }
+              }
+            }
+          },
+          "consequences": {
+            "type": "object",
+            "additionalProperties": { "type": "object" }
+          },
+          "cascade": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["event", "probability"],
+              "additionalProperties": false,
+              "properties": {
+                "event": { "type": "string", "pattern": "^(evt_|bsw_)" },
+                "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "character_rules": {
+      "type": "object",
+      "required": ["spawn_probability_per_tick", "roles"],
+      "additionalProperties": false,
+      "properties": {
+        "spawn_probability_per_tick": { "type": "number", "minimum": 0, "maximum": 1 },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "impact_range", "attribute_modifiers", "duration_ticks"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^role_" },
+              "name": { "type": "string", "minLength": 1 },
+              "impact_range": {
+                "type": "array",
+                "items": { "type": "number", "minimum": 0, "maximum": 1 },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "attribute_modifiers": {
+                "type": "object",
+                "additionalProperties": { "type": "number" }
+              },
+              "duration_ticks": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 1 },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "initial_state": {
+      "type": "object",
+      "required": ["faction_states", "initial_relations"],
+      "additionalProperties": false,
+      "properties": {
+        "faction_states": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["faction_id", "starting_regions", "starting_population", "unlocked_techs"],
+            "additionalProperties": false,
+            "properties": {
+              "faction_id": { "type": "string", "pattern": "^fac_" },
+              "starting_regions": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "pattern": "^reg_" }
+              },
+              "starting_population": { "type": "integer", "minimum": 1 },
+              "unlocked_techs": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^tech_" }
+              }
+            }
+          }
+        },
+        "initial_relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["faction_a", "faction_b", "type", "intensity"],
+            "additionalProperties": false,
+            "properties": {
+              "faction_a": { "type": "string", "pattern": "^fac_" },
+              "faction_b": { "type": "string", "pattern": "^fac_" },
+              "type": { "type": "string", "enum": ["alliance", "neutral", "rivalry"] },
+              "intensity": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "historical_events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["description", "years_before_simulation", "involved_factions"],
+            "additionalProperties": false,
+            "properties": {
+              "description": { "type": "string", "minLength": 1 },
+              "years_before_simulation": { "type": "integer", "minimum": 1 },
+              "involved_factions": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^fac_" },
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }

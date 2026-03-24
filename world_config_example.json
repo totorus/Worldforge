@@ -1,0 +1,519 @@
+{
+  "meta": {
+    "genre": "heroic_fantasy",
+    "world_name": "Erathis",
+    "simulation_years": 500,
+    "tick_duration_years": 1,
+    "seed": 42,
+    "chaos_level": 0.4,
+    "trope_subversion": 0.6
+  },
+
+  "geography": {
+    "regions": [
+      {
+        "id": "reg_plains",
+        "name": "Plaines de Valdris",
+        "terrain": "fertile",
+        "habitability": 0.9,
+        "max_population": 500000,
+        "resources": ["res_grain", "res_iron"],
+        "connections": [
+          { "target": "reg_forest", "traversal_difficulty": 0.3 },
+          { "target": "reg_coast", "traversal_difficulty": 0.2 }
+        ]
+      },
+      {
+        "id": "reg_forest",
+        "name": "Forêt d'Ithréal",
+        "terrain": "forest_ancient",
+        "habitability": 0.6,
+        "max_population": 200000,
+        "resources": ["res_crystals", "res_wood"],
+        "connections": [
+          { "target": "reg_plains", "traversal_difficulty": 0.3 },
+          { "target": "reg_mountains", "traversal_difficulty": 0.6 }
+        ]
+      },
+      {
+        "id": "reg_mountains",
+        "name": "Monts de Khar'gul",
+        "terrain": "mountainous_arid",
+        "habitability": 0.4,
+        "max_population": 150000,
+        "resources": ["res_iron", "res_gems"],
+        "connections": [
+          { "target": "reg_forest", "traversal_difficulty": 0.6 },
+          { "target": "reg_coast", "traversal_difficulty": 0.5 }
+        ]
+      },
+      {
+        "id": "reg_coast",
+        "name": "Rivages de Sélène",
+        "terrain": "coastal",
+        "habitability": 0.7,
+        "max_population": 300000,
+        "resources": ["res_fish", "res_gems"],
+        "connections": [
+          { "target": "reg_plains", "traversal_difficulty": 0.2 },
+          { "target": "reg_mountains", "traversal_difficulty": 0.5 }
+        ]
+      }
+    ]
+  },
+
+  "resources": [
+    {
+      "id": "res_grain",
+      "name": "Céréales",
+      "rarity": 0.2,
+      "effects": { "fertility": 0.1, "cohesion": 0.05 }
+    },
+    {
+      "id": "res_iron",
+      "name": "Fer",
+      "rarity": 0.4,
+      "effects": { "aggressiveness": 0.1 }
+    },
+    {
+      "id": "res_crystals",
+      "name": "Cristaux arcaniques",
+      "rarity": 0.8,
+      "effects": { "power_affinity": 0.2 }
+    },
+    {
+      "id": "res_wood",
+      "name": "Bois ancestral",
+      "rarity": 0.3,
+      "effects": { "adaptability": 0.1 }
+    },
+    {
+      "id": "res_gems",
+      "name": "Pierres précieuses",
+      "rarity": 0.6,
+      "effects": { "cohesion": 0.1, "expansionism": 0.05 }
+    },
+    {
+      "id": "res_fish",
+      "name": "Ressources maritimes",
+      "rarity": 0.2,
+      "effects": { "fertility": 0.05, "adaptability": 0.05 }
+    }
+  ],
+
+  "factions": [
+    {
+      "id": "fac_humans",
+      "name": "Royaume de Valdris",
+      "governance": "monarchy",
+      "avg_lifespan": 70,
+      "cultural_traits": ["expansionist", "mercantile", "ruthless", "innovative"],
+      "attributes": {
+        "aggressiveness": 0.7,
+        "cohesion": 0.5,
+        "expansionism": 0.8,
+        "power_affinity": 0.3,
+        "fertility": 0.7,
+        "adaptability": 0.8
+      }
+    },
+    {
+      "id": "fac_elves",
+      "name": "Conseil d'Ithréal",
+      "governance": "council",
+      "avg_lifespan": 500,
+      "cultural_traits": ["isolationist", "scholarly", "arrogant", "ritualistic"],
+      "attributes": {
+        "aggressiveness": 0.2,
+        "cohesion": 0.8,
+        "expansionism": 0.2,
+        "power_affinity": 0.9,
+        "fertility": 0.2,
+        "adaptability": 0.4
+      }
+    },
+    {
+      "id": "fac_orcs",
+      "name": "Clans de Khar'gul",
+      "governance": "tribal_chieftain",
+      "avg_lifespan": 45,
+      "cultural_traits": ["honor_bound", "resilient", "spiritual", "communal"],
+      "attributes": {
+        "aggressiveness": 0.5,
+        "cohesion": 0.7,
+        "expansionism": 0.3,
+        "power_affinity": 0.2,
+        "fertility": 0.8,
+        "adaptability": 0.6
+      }
+    }
+  ],
+
+  "tech_tree": {
+    "nodes": [
+      {
+        "id": "tech_agriculture",
+        "name": "Agriculture avancée",
+        "prerequisites": [],
+        "unlock_difficulty": 0.2,
+        "effects": { "fertility": 0.1, "max_population_modifier": 1.2 }
+      },
+      {
+        "id": "tech_metallurgy",
+        "name": "Métallurgie",
+        "prerequisites": [],
+        "unlock_difficulty": 0.3,
+        "effects": { "aggressiveness": 0.1 }
+      },
+      {
+        "id": "tech_fortification",
+        "name": "Fortifications",
+        "prerequisites": ["tech_metallurgy"],
+        "unlock_difficulty": 0.4,
+        "effects": { "cohesion": 0.1, "defense_bonus": 0.3 }
+      },
+      {
+        "id": "tech_arcane_basics",
+        "name": "Magie élémentaire",
+        "prerequisites": [],
+        "unlock_difficulty": 0.5,
+        "effects": { "power_affinity": 0.15 }
+      },
+      {
+        "id": "tech_arcane_advanced",
+        "name": "Haute sorcellerie",
+        "prerequisites": ["tech_arcane_basics"],
+        "unlock_difficulty": 0.8,
+        "effects": { "power_affinity": 0.25, "defense_bonus": 0.2 }
+      },
+      {
+        "id": "tech_navigation",
+        "name": "Navigation maritime",
+        "prerequisites": ["tech_agriculture"],
+        "unlock_difficulty": 0.4,
+        "effects": { "expansionism": 0.15, "adaptability": 0.1 }
+      },
+      {
+        "id": "tech_siege",
+        "name": "Engins de siège",
+        "prerequisites": ["tech_metallurgy", "tech_fortification"],
+        "unlock_difficulty": 0.6,
+        "effects": { "aggressiveness": 0.15, "attack_bonus": 0.3 }
+      },
+      {
+        "id": "tech_medicine",
+        "name": "Médecine",
+        "prerequisites": ["tech_agriculture"],
+        "unlock_difficulty": 0.4,
+        "effects": { "fertility": 0.05, "avg_lifespan_modifier": 1.1 }
+      }
+    ]
+  },
+
+  "event_pool": [
+    {
+      "id": "evt_border_war",
+      "name": "Guerre frontalière",
+      "category": "conflict",
+      "is_black_swan": false,
+      "base_probability": 0.15,
+      "preconditions": {
+        "requires": "two_adjacent_factions",
+        "min_attribute": { "aggressiveness": 0.4 }
+      },
+      "modifiers": [
+        { "condition": "resource_competition", "probability_bonus": 0.15 },
+        { "condition": "attacker_aggressiveness_above_0.7", "probability_bonus": 0.1 },
+        { "condition": "defender_cohesion_below_0.3", "probability_bonus": 0.1 }
+      ],
+      "consequences": {
+        "winner": { "territory_gain": true, "population_loss": 0.05 },
+        "loser": { "territory_loss": true, "population_loss": 0.15, "cohesion": -0.1 }
+      }
+    },
+    {
+      "id": "evt_trade_alliance",
+      "name": "Alliance commerciale",
+      "category": "diplomacy",
+      "is_black_swan": false,
+      "base_probability": 0.12,
+      "preconditions": {
+        "requires": "two_adjacent_factions",
+        "min_attribute": { "cohesion": 0.4 }
+      },
+      "modifiers": [
+        { "condition": "shared_resource_need", "probability_bonus": 0.1 },
+        { "condition": "both_low_aggressiveness", "probability_bonus": 0.1 }
+      ],
+      "consequences": {
+        "both": { "fertility": 0.05, "cohesion": 0.05, "aggressiveness": -0.05 }
+      }
+    },
+    {
+      "id": "evt_succession_crisis",
+      "name": "Crise de succession",
+      "category": "internal",
+      "is_black_swan": false,
+      "base_probability": 0.08,
+      "preconditions": {
+        "requires": "governance_monarchy_or_chieftain"
+      },
+      "modifiers": [
+        { "condition": "cohesion_below_0.4", "probability_bonus": 0.15 },
+        { "condition": "leader_death", "probability_bonus": 0.3 }
+      ],
+      "consequences": {
+        "faction": { "cohesion": -0.2, "aggressiveness": 0.1, "civil_war_chance": 0.3 }
+      }
+    },
+    {
+      "id": "evt_epidemic",
+      "name": "Épidémie",
+      "category": "catastrophe",
+      "is_black_swan": false,
+      "base_probability": 0.06,
+      "preconditions": {
+        "requires": "population_above_70_percent_capacity"
+      },
+      "modifiers": [
+        { "condition": "no_medicine_tech", "probability_bonus": 0.1 },
+        { "condition": "trade_route_active", "probability_bonus": 0.05 }
+      ],
+      "consequences": {
+        "faction": { "population_loss": 0.2, "fertility": -0.1, "cohesion": -0.05 }
+      }
+    },
+    {
+      "id": "evt_migration",
+      "name": "Vague migratoire",
+      "category": "migration",
+      "is_black_swan": false,
+      "base_probability": 0.07,
+      "preconditions": {
+        "requires": "faction_in_low_habitability_region"
+      },
+      "modifiers": [
+        { "condition": "famine_active", "probability_bonus": 0.2 },
+        { "condition": "war_lost_recently", "probability_bonus": 0.15 }
+      ],
+      "consequences": {
+        "origin": { "population_loss": 0.1 },
+        "destination": { "population_gain": 0.1, "cohesion": -0.05 }
+      }
+    },
+    {
+      "id": "evt_forced_alliance",
+      "name": "Alliance forcée",
+      "category": "diplomacy",
+      "is_black_swan": false,
+      "base_probability": 0.05,
+      "preconditions": {
+        "requires": "two_adjacent_factions"
+      },
+      "modifiers": [
+        { "condition": "common_threat_active", "probability_bonus": 0.2 }
+      ],
+      "consequences": {
+        "both": { "cohesion": 0.1, "aggressiveness": -0.1 }
+      }
+    },
+    {
+      "id": "evt_religious_schism",
+      "name": "Schisme religieux",
+      "category": "internal",
+      "is_black_swan": false,
+      "base_probability": 0.05,
+      "preconditions": {
+        "requires": "governance_theocracy_or_council"
+      },
+      "modifiers": [
+        { "condition": "power_affinity_above_0.6", "probability_bonus": 0.1 },
+        { "condition": "multi_region_faction", "probability_bonus": 0.1 }
+      ],
+      "consequences": {
+        "faction": { "cohesion": -0.25, "faction_split_chance": 0.2 }
+      }
+    },
+    {
+      "id": "evt_discovery",
+      "name": "Découverte majeure",
+      "category": "discovery",
+      "is_black_swan": false,
+      "base_probability": 0.08,
+      "preconditions": {
+        "requires": "faction_with_power_affinity_above_0.3"
+      },
+      "modifiers": [
+        { "condition": "controls_rare_resource", "probability_bonus": 0.1 }
+      ],
+      "consequences": {
+        "faction": { "unlock_random_tech": true, "power_affinity": 0.05 }
+      }
+    },
+
+    {
+      "id": "bsw_dragon_awakening",
+      "name": "Réveil d'un dragon ancien",
+      "category": "catastrophe",
+      "is_black_swan": true,
+      "severity": 0.9,
+      "base_probability": 0.02,
+      "preconditions": {
+        "requires": "region_with_mountains_or_ancient"
+      },
+      "modifiers": [
+        { "condition": "high_magic_activity_in_region", "probability_bonus": 0.02 }
+      ],
+      "consequences": {
+        "region": { "habitability": -0.3, "population_loss": 0.3 },
+        "all_factions_in_region": { "cohesion": -0.1, "aggressiveness": -0.1 }
+      },
+      "cascade": [
+        { "event": "evt_migration", "probability": 0.8 },
+        { "event": "evt_forced_alliance", "probability": 0.4 }
+      ]
+    },
+    {
+      "id": "bsw_arcane_cataclysm",
+      "name": "Cataclysme arcanique",
+      "category": "catastrophe",
+      "is_black_swan": true,
+      "severity": 1.0,
+      "base_probability": 0.01,
+      "preconditions": {
+        "requires": "any_faction_has_advanced_arcane"
+      },
+      "modifiers": [
+        { "condition": "multiple_factions_with_magic", "probability_bonus": 0.01 }
+      ],
+      "consequences": {
+        "global": { "all_power_affinity": -0.3, "habitability_all_regions": -0.1 }
+      },
+      "cascade": [
+        { "event": "evt_epidemic", "probability": 0.5 },
+        { "event": "evt_religious_schism", "probability": 0.6 },
+        { "event": "evt_migration", "probability": 0.7 }
+      ]
+    },
+    {
+      "id": "bsw_plague",
+      "name": "Grande Peste",
+      "category": "catastrophe",
+      "is_black_swan": true,
+      "severity": 0.8,
+      "base_probability": 0.02,
+      "preconditions": {
+        "requires": "any_trade_route_active"
+      },
+      "modifiers": [
+        { "condition": "high_population_density", "probability_bonus": 0.02 }
+      ],
+      "consequences": {
+        "all_connected_factions": { "population_loss": 0.35, "fertility": -0.15 }
+      },
+      "cascade": [
+        { "event": "evt_succession_crisis", "probability": 0.5 },
+        { "event": "evt_migration", "probability": 0.4 }
+      ]
+    },
+    {
+      "id": "bsw_prophecy",
+      "name": "Avènement d'une prophétie",
+      "category": "discovery",
+      "is_black_swan": true,
+      "severity": 0.6,
+      "base_probability": 0.03,
+      "preconditions": {
+        "requires": "any_faction_with_power_affinity_above_0.5"
+      },
+      "modifiers": [],
+      "consequences": {
+        "random_faction": { "cohesion": 0.2, "power_affinity": 0.15, "spawn_notable_character": "prophet" }
+      },
+      "cascade": [
+        { "event": "evt_religious_schism", "probability": 0.3 }
+      ]
+    }
+  ],
+
+  "character_rules": {
+    "spawn_probability_per_tick": 0.1,
+    "roles": [
+      {
+        "id": "role_leader",
+        "name": "Dirigeant",
+        "impact_range": [0.1, 0.3],
+        "attribute_modifiers": { "cohesion": 0.15, "expansionism": 0.1 },
+        "duration_ticks": [10, 40]
+      },
+      {
+        "id": "role_hero",
+        "name": "Héros",
+        "impact_range": [0.15, 0.35],
+        "attribute_modifiers": { "aggressiveness": 0.1, "cohesion": 0.1 },
+        "duration_ticks": [5, 25]
+      },
+      {
+        "id": "role_scholar",
+        "name": "Érudit",
+        "impact_range": [0.05, 0.2],
+        "attribute_modifiers": { "power_affinity": 0.15, "adaptability": 0.1 },
+        "duration_ticks": [15, 50]
+      },
+      {
+        "id": "role_traitor",
+        "name": "Traître",
+        "impact_range": [0.1, 0.25],
+        "attribute_modifiers": { "cohesion": -0.2, "aggressiveness": 0.1 },
+        "duration_ticks": [3, 15]
+      },
+      {
+        "id": "role_prophet",
+        "name": "Prophète",
+        "impact_range": [0.1, 0.3],
+        "attribute_modifiers": { "cohesion": 0.2, "power_affinity": 0.1 },
+        "duration_ticks": [10, 30]
+      }
+    ]
+  },
+
+  "initial_state": {
+    "faction_states": [
+      {
+        "faction_id": "fac_humans",
+        "starting_regions": ["reg_plains"],
+        "starting_population": 250000,
+        "unlocked_techs": ["tech_agriculture", "tech_metallurgy"]
+      },
+      {
+        "faction_id": "fac_elves",
+        "starting_regions": ["reg_forest"],
+        "starting_population": 80000,
+        "unlocked_techs": ["tech_agriculture", "tech_arcane_basics"]
+      },
+      {
+        "faction_id": "fac_orcs",
+        "starting_regions": ["reg_mountains"],
+        "starting_population": 120000,
+        "unlocked_techs": ["tech_metallurgy"]
+      }
+    ],
+    "initial_relations": [
+      { "faction_a": "fac_humans", "faction_b": "fac_elves", "type": "neutral", "intensity": 0.3 },
+      { "faction_a": "fac_humans", "faction_b": "fac_orcs", "type": "rivalry", "intensity": 0.6 },
+      { "faction_a": "fac_elves", "faction_b": "fac_orcs", "type": "rivalry", "intensity": 0.4 }
+    ],
+    "historical_events": [
+      {
+        "description": "La Guerre des Premiers Âges opposa les trois peuples pour le contrôle des Rivages de Sélène, sans vainqueur définitif.",
+        "years_before_simulation": 200,
+        "involved_factions": ["fac_humans", "fac_elves", "fac_orcs"]
+      },
+      {
+        "description": "Le Pacte de la Forêt Muette établit une trêve fragile entre le Conseil d'Ithréal et le Royaume de Valdris.",
+        "years_before_simulation": 50,
+        "involved_factions": ["fac_humans", "fac_elves"]
+      }
+    ]
+  }
+}
