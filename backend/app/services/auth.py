@@ -48,6 +48,17 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide")
 
 
+def decode_access_token(token: str) -> dict:
+    """Decode a JWT without FastAPI dependency injection (used by WebSocket auth).
+
+    Returns the payload dict on success, raises ValueError on failure.
+    """
+    try:
+        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except JWTError as exc:
+        raise ValueError(f"Invalid token: {exc}") from exc
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),

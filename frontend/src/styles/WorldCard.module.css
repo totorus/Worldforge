@@ -1,0 +1,97 @@
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-dim);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cardHeader h3 {
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.badgeDraft {
+  background: rgba(107, 114, 128, 0.2);
+  color: var(--status-draft);
+}
+
+.badgeConfigured {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--status-configured);
+}
+
+.badgeSimulated {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--status-simulated);
+}
+
+.badgeNarrated {
+  background: rgba(200, 168, 78, 0.15);
+  color: var(--status-narrated);
+}
+
+.badgePublished {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--status-published);
+}
+
+.stats {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.statLabel {
+  color: var(--text-muted);
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.actions button {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+}

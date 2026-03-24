@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24  # 24h
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": "../.env", "extra": "ignore"}
 
 
 settings = Settings()

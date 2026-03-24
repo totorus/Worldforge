@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import auth, wizard, simulate, narrate, export, worlds
+from app.routers import auth, wizard, simulate, narrate, export, worlds, ws, tasks
 
 app = FastAPI(title="WorldForge", version="0.1.0")
 
@@ -20,6 +20,8 @@ app.include_router(simulate.router, prefix="/api/simulate", tags=["simulate"])
 app.include_router(narrate.router, prefix="/api/narrate", tags=["narrate"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
 app.include_router(worlds.router, prefix="/api/worlds", tags=["worlds"])
+app.include_router(ws.router, tags=["websocket"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 
 
 @app.get("/api/health")
