@@ -15,6 +15,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://worldforge:${POSTGRES_PASSWORD}@postgres:5432/worldforge
       - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
       - KIMI_API_KEY=${KIMI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - BOOKSTACK_URL=http://bookstack:8080
@@ -30,6 +31,8 @@ services:
 
   postgres:
     image: postgres:16
+    ports:
+      - "5433:5432"
     environment:
       - POSTGRES_DB=worldforge
       - POSTGRES_USER=worldforge

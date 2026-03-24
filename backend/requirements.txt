@@ -4,10 +4,10 @@ sqlalchemy[asyncio]
 asyncpg
 alembic
 redis
-pydantic
+pydantic[email]
 pydantic-settings
 python-jose[cryptography]
-passlib[bcrypt]
+bcrypt>=4.2
 httpx
 jsonschema
 python-multipart
