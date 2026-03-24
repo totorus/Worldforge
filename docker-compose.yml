@@ -1,0 +1,86 @@
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "5214:5214"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://backend:8000
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://worldforge:${POSTGRES_PASSWORD}@postgres:5432/worldforge
+      - REDIS_URL=redis://redis:6379
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BOOKSTACK_URL=http://bookstack:8080
+      - BOOKSTACK_TOKEN_ID=${BOOKSTACK_TOKEN_ID}
+      - BOOKSTACK_TOKEN_SECRET=${BOOKSTACK_TOKEN_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      bookstack:
+        condition: service_started
+
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=worldforge
+      - POSTGRES_USER=worldforge
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worldforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+
+  bookstack:
+    image: lscr.io/linuxserver/bookstack:latest
+    environment:
+      - APP_URL=${BOOKSTACK_PUBLIC_URL:-https://worlds.ssantoro.fr}
+      - DB_HOST=bookstack-db
+      - DB_PORT=3306
+      - DB_USER=bookstack
+      - DB_PASS=${BOOKSTACK_DB_PASSWORD}
+      - DB_DATABASE=bookstack
+    ports:
+      - "6875:8080"
+    volumes:
+      - bookstack_data:/config
+    depends_on:
+      bookstack-db:
+        condition: service_healthy
+
+  bookstack-db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=${BOOKSTACK_DB_PASSWORD}
+      - MYSQL_DATABASE=bookstack
+      - MYSQL_USER=bookstack
+      - MYSQL_PASSWORD=${BOOKSTACK_DB_PASSWORD}
+    volumes:
+      - bookstack_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
+  bookstack_data:
+  bookstack_db_data:

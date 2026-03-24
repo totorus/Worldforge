@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorldForge World Configuration",
+  "description": "TODO: Full JSON Schema for world configuration validation",
+  "type": "object"
+}
