@@ -99,6 +99,23 @@ export default function WorldView() {
     }
   };
 
+  const handleRegenerate = useCallback(async () => {
+    const hasDownstream = ["simulated", "narrated", "exported"].includes(world?.status);
+    const message = hasDownstream
+      ? "Attention : la simulation, la narration et l'export existants seront perdus. Continuer ?"
+      : "Régénérer le monde avec une nouvelle configuration ?";
+
+    if (!window.confirm(message)) return;
+
+    try {
+      setError(null);
+      const data = await worlds.regenerate(worldId);
+      // Task is now running — the existing task watcher will handle refresh
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [worldId, world?.status]);
+
   const handleDelete = async () => {
     if (!window.confirm("Supprimer definitivement ce monde ?")) return;
     try {
@@ -228,6 +245,14 @@ export default function WorldView() {
               >
                 Configuration
               </Link>
+              {/* Regenerate button */}
+              <button
+                className={styles.actionBtn}
+                onClick={handleRegenerate}
+                disabled={taskRunning}
+              >
+                Régénérer le monde
+              </button>
               <button
                 className={`${styles.actionBtn} ${styles.delete}`}
                 onClick={handleDelete}
