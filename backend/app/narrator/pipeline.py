@@ -9,6 +9,8 @@ from app.narrator.events_narrator import narrate_events
 from app.narrator.characters_narrator import generate_biographies, _extract_characters
 from app.narrator.legends import generate_legends
 from app.narrator.coherence import check_coherence
+from app.narrator.entity_extraction import run_entity_extraction
+from app.narrator.coherence_fix import fix_coherence_issues
 
 logger = logging.getLogger("worldforge.narrator.pipeline")
 
@@ -21,6 +23,7 @@ ALL_STEPS = [
     "event_narratives",
     "character_bios",
     "legends",
+    "entity_extraction",
     "coherence_check",
 ]
 
@@ -45,36 +48,40 @@ async def run_narration(config: dict, timeline: dict) -> dict:
     logger.info("Starting full narration pipeline for '%s'", config.get("meta", {}).get("world_name", "?"))
 
     # Step 1: Era splitting
-    logger.info("Step 1/8: Era splitting")
+    logger.info("Step 1/9: Era splitting")
     narrative_blocks["eras"] = await _run_era_splitting(config, timeline)
 
     # Step 2: Naming
-    logger.info("Step 2/8: Naming")
+    logger.info("Step 2/9: Naming")
     narrative_blocks["names"] = await _run_naming(config, timeline)
 
     # Step 3: Faction sheets
-    logger.info("Step 3/8: Faction sheets")
+    logger.info("Step 3/9: Faction sheets")
     narrative_blocks["factions"] = await _run_faction_sheets(config, timeline)
 
     # Step 4: Region sheets
-    logger.info("Step 4/8: Region sheets")
+    logger.info("Step 4/9: Region sheets")
     narrative_blocks["regions"] = await _run_region_sheets(config, timeline)
 
     # Step 5: Event narratives
-    logger.info("Step 5/8: Event narratives")
+    logger.info("Step 5/9: Event narratives")
     narrative_blocks["events"] = await _run_event_narratives(config, timeline, narrative_blocks)
 
     # Step 6: Character biographies
-    logger.info("Step 6/8: Character biographies")
+    logger.info("Step 6/9: Character biographies")
     narrative_blocks["characters"] = await _run_character_bios(config, timeline, narrative_blocks)
 
     # Step 7: Legends
-    logger.info("Step 7/8: Legends")
+    logger.info("Step 7/9: Legends")
     narrative_blocks["legends"] = await _run_legends(config, narrative_blocks)
 
-    # Step 8: Coherence check
-    logger.info("Step 8/8: Coherence check")
-    narrative_blocks["coherence_report"] = await _run_coherence_check(config, narrative_blocks)
+    # Step 8: Entity extraction
+    logger.info("Step 8/9: Entity extraction")
+    narrative_blocks["entity_summary"] = await _run_entity_extraction(config, narrative_blocks, timeline)
+
+    # Step 9: Coherence check with auto-fix loop
+    logger.info("Step 9/9: Coherence check")
+    narrative_blocks["coherence_report"] = await run_coherence_with_fix(config, narrative_blocks)
 
     logger.info(
         "Narration pipeline complete. Coherence score: %.2f",
@@ -108,6 +115,7 @@ async def run_partial_narration(
         "event_narratives": lambda: _run_event_narratives(config, timeline, narrative_blocks),
         "character_bios": lambda: _run_character_bios(config, timeline, narrative_blocks),
         "legends": lambda: _run_legends(config, narrative_blocks),
+        "entity_extraction": lambda: _run_entity_extraction(config, narrative_blocks, timeline),
         "coherence_check": lambda: _run_coherence_check(config, narrative_blocks),
     }
 
@@ -119,6 +127,7 @@ async def run_partial_narration(
         "event_narratives": "events",
         "character_bios": "characters",
         "legends": "legends",
+        "entity_extraction": "entity_summary",
         "coherence_check": "coherence_report",
     }
 
@@ -237,3 +246,32 @@ async def _run_legends(config: dict, narrative_blocks: dict) -> list[dict]:
 async def _run_coherence_check(config: dict, narrative_blocks: dict) -> dict:
     """Run coherence validation on all narrative content."""
     return await check_coherence(narrative_blocks, config)
+
+
+async def _run_entity_extraction(config: dict, narrative_blocks: dict, timeline: dict | None = None) -> dict:
+    """Run entity extraction per era (or iterative fallback)."""
+    return await run_entity_extraction(config, narrative_blocks, timeline=timeline, max_depth=4)
+
+
+async def run_coherence_with_fix(config: dict, narrative_blocks: dict) -> dict:
+    """Run coherence check with auto-fix loop. Returns coherence report."""
+    coherence_threshold = 0.75
+    max_iterations = 3
+
+    for iteration in range(1, max_iterations + 1):
+        logger.info("Coherence check iteration %d/%d", iteration, max_iterations)
+        report = await _run_coherence_check(config, narrative_blocks)
+
+        score = report.get("score", 0.5)
+        issues = report.get("issues", [])
+
+        if score >= coherence_threshold or not issues:
+            return report
+
+        if iteration < max_iterations:
+            await fix_coherence_issues(narrative_blocks, config, issues)
+        else:
+            report["warning"] = f"Score de cohérence ({score:.2f}) inférieur au seuil après {max_iterations} corrections."
+            return report
+
+    return report
