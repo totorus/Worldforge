@@ -80,6 +80,7 @@ export const worlds = {
   delete: (id) => apiFetch(`/worlds/${id}`, { method: "DELETE" }),
   getTimeline: (id) => apiFetch(`/worlds/${id}/timeline`),
   getNarrative: (id) => apiFetch(`/worlds/${id}/narrative`),
+  regenerate: (id) => apiFetch(`/worlds/${id}/regenerate`, { method: "POST" }),
 };
 
 // Wizard
@@ -90,6 +91,7 @@ export const wizard = {
   getHistory: (sessionId) => apiFetch(`/wizard/${sessionId}/history`),
   finalize: (sessionId) => apiFetch(`/wizard/${sessionId}/finalize`, { method: "POST" }),
   validate: (sessionId) => apiFetch(`/wizard/${sessionId}/validate`, { method: "POST" }),
+  generate: (sessionId) => apiFetch(`/wizard/${sessionId}/generate`, { method: "POST" }),
 };
 
 // Simulate
