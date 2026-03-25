@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -7,12 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.database import get_db
+from app.database import async_session, get_db
 from app.models.session import WizardSession
 from app.models.world import World
 from app.models.user import User
 from app.services.auth import get_current_user
 from app.services import kimi_client
+from app.services.task_manager import create_task, update_task, get_task, wizard_notify, TaskStatus
 from app.services.wizard_prompt import get_system_prompt
 from app.services.world_validator import validate_world_config
 
@@ -250,6 +252,197 @@ async def validate(
         "world_id": str(session.world_id),
         "world_name": config.get("meta", {}).get("world_name", ""),
     }
+
+
+# Immersive progress messages for surprise mode (no spoilers)
+_SURPRISE_PROGRESS_MESSAGES = [
+    "Je dessine les contours du monde...",
+    "Des civilisations prennent forme...",
+    "Les alliances et rivalités se nouent...",
+    "L'histoire s'écrit, siècle après siècle...",
+    "Les dernières touches...",
+]
+
+
+@router.post("/{session_id}/generate")
+async def generate_world(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Launch background world generation for surprise mode."""
+    session = await _get_session(session_id, current_user.id, db)
+
+    # Guards
+    if session.mode != "surprise":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La génération automatique n'est disponible qu'en mode surprise",
+        )
+    if session.current_step < 3:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Les questions du mode surprise ne sont pas encore terminées",
+        )
+    if session.generation_task_id:
+        existing_task = get_task(session.generation_task_id)
+        if existing_task and existing_task.status == TaskStatus.RUNNING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Une génération est déjà en cours",
+            )
+
+    # Create background task
+    task = create_task(type="wizard_generate", world_id=str(session.world_id), user_id=str(current_user.id))
+    session.generation_task_id = task.id
+    await db.commit()
+
+    asyncio.create_task(
+        _run_surprise_generation(task.id, str(session.id), str(session.world_id), str(current_user.id))
+    )
+
+    return {"task_id": task.id, "status": "accepted"}
+
+
+async def _run_surprise_generation(task_id: str, session_id: str, world_id: str, user_id: str):
+    """Background task: generate world config in surprise mode."""
+    import asyncio as _asyncio
+
+    try:
+        await update_task(task_id, status=TaskStatus.RUNNING, progress=5, message="Génération en cours")
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(WizardSession).where(WizardSession.id == session_id)
+            )
+            session = result.scalar_one_or_none()
+            if not session:
+                await update_task(task_id, status=TaskStatus.FAILED, error="Session introuvable")
+                return
+
+            messages = list(session.messages)
+
+            # Send immersive progress messages
+            for i, progress_msg in enumerate(_SURPRISE_PROGRESS_MESSAGES):
+                progress = int(10 + (60 * i / len(_SURPRISE_PROGRESS_MESSAGES)))
+                await update_task(task_id, progress=progress, message=progress_msg)
+
+                # Send wizard_progress WebSocket event
+                await wizard_notify(user_id, "wizard_progress", {
+                    "session_id": session_id,
+                    "message": progress_msg,
+                    "step": 3,
+                })
+
+                # Persist progress message in session
+                messages.append({"role": "assistant", "content": progress_msg})
+                session.messages = messages
+                flag_modified(session, "messages")
+                await db.commit()
+
+                # Wait between messages (simulate work being done)
+                await _asyncio.sleep(3)
+
+            # Ask Kimi to generate the JSON
+            finalize_messages = [*messages, {
+                "role": "user",
+                "content": "Produis maintenant le JSON de configuration complet pour ce monde. "
+                           "Mets-le dans un bloc ```json ... ```. Assure-toi qu'il est valide et complet. "
+                           "Sois très créatif et généreux dans les détails — c'est toi qui décides de tout.",
+            }]
+
+            await update_task(task_id, progress=75, message="Création de la configuration...")
+            response = await kimi_client.chat_completion(finalize_messages, temperature=0.3, max_tokens=16384)
+
+            # Handle truncated JSON (same logic as finalize endpoint)
+            if "```json" in response:
+                after_json = response.split("```json", 1)[-1]
+                if after_json.count("```") == 0:
+                    finalize_messages.append({"role": "assistant", "content": response})
+                    finalize_messages.append({"role": "user", "content": "Continue le JSON exactement où tu t'es arrêté, sans répéter ce qui précède. Termine avec ```."})
+                    continuation = await kimi_client.chat_completion(finalize_messages, temperature=0.3, max_tokens=16384)
+                    response = response + continuation
+
+            # Extract and validate JSON
+            messages.append({"role": "user", "content": "[Génération automatique]"})
+            messages.append({"role": "assistant", "content": response})
+
+            config = _extract_json_from_messages(messages)
+            if config is None:
+                raise ValueError("Aucun JSON valide trouvé dans la réponse de Kimi")
+
+            config = _auto_repair_config(config)
+
+            errors = validate_world_config(config)
+            if errors:
+                error_msgs = [e.message for e in errors[:5]]
+                raise ValueError(f"Validation échouée: {'; '.join(error_msgs)}")
+
+            await update_task(task_id, progress=90, message="Sauvegarde du monde...")
+
+            # Save config to world
+            world = await db.get(World, world_id)
+            if not world:
+                raise ValueError("Monde introuvable")
+
+            world.config = config
+            world.name = config.get("meta", {}).get("world_name", world.name)
+            world.status = "configured"
+            world.simulation_years = config.get("meta", {}).get("simulation_years")
+            world.total_factions = len(config.get("factions", []))
+
+            # Generate final Kimi message
+            final_msg = await kimi_client.chat_completion(
+                [*messages, {"role": "user", "content": "Dis simplement à l'utilisateur que son monde est prêt à être découvert. Une phrase, ton de conteur enthousiaste. Ne révèle RIEN du contenu."}],
+                temperature=0.8,
+                max_tokens=200,
+            )
+            final_msg = _strip_markers(final_msg)
+            messages.append({"role": "assistant", "content": final_msg})
+
+            # Update session
+            session.messages = messages
+            session.current_step = 4
+            session.status = "finalized"
+            flag_modified(session, "messages")
+            await db.commit()
+
+            # Notify frontend
+            await wizard_notify(user_id, "wizard_complete", {
+                "session_id": session_id,
+                "world_id": world_id,
+                "world_name": world.name,
+            })
+
+            await update_task(task_id, status=TaskStatus.COMPLETED, progress=100, message="Monde créé",
+                              result={"world_id": world_id, "world_name": world.name})
+
+    except Exception as exc:
+        import logging
+        logging.getLogger("worldforge.wizard").exception("Surprise generation failed")
+
+        # Persist error message in session
+        try:
+            async with async_session() as db:
+                result = await db.execute(
+                    select(WizardSession).where(WizardSession.id == session_id)
+                )
+                session = result.scalar_one_or_none()
+                if session:
+                    error_msg = "Désolé, la création a rencontré un problème. Tu peux réessayer."
+                    session.messages = [*session.messages, {"role": "assistant", "content": error_msg}]
+                    flag_modified(session, "messages")
+                    # NB: on garde generation_task_id pour que history puisse résoudre "failed"
+                    await db.commit()
+        except Exception:
+            pass
+
+        await wizard_notify(user_id, "wizard_error", {
+            "session_id": session_id,
+            "error": str(exc),
+        })
+
+        await update_task(task_id, status=TaskStatus.FAILED, progress=0, error=str(exc))
 
 
 # --- Helpers ---

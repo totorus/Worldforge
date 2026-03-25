@@ -103,3 +103,9 @@ def unsubscribe(user_id: str, q: asyncio.Queue):
 async def _notify(user_id: str, data: dict):
     for q in _subscribers.get(user_id, []):
         await q.put(data)
+
+
+async def wizard_notify(user_id: str, event_type: str, data: dict):
+    """Send a wizard-specific event to the user's WebSocket subscribers."""
+    payload = {"type": event_type, **data}
+    await _notify(user_id, payload)
