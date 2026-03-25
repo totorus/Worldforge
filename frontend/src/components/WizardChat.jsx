@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import styles from "../styles/Wizard.module.css";
 
-const STEP_LABELS = [
+const GUIDED_STEP_LABELS = [
   "Genre",
   "Ambiance",
   "Géographie",
@@ -13,6 +13,13 @@ const STEP_LABELS = [
   "Départ",
   "Durée",
   "Récap",
+];
+
+const SURPRISE_STEP_LABELS = [
+  "Genre",
+  "Envies",
+  "Génération",
+  "Prêt",
 ];
 
 function renderMarkdown(text) {
@@ -34,7 +41,6 @@ function renderMarkdown(text) {
     /(?:^|\n)((?:\|[^\n]+\|\n)+)/g,
     (match) => {
       const lines = match.trim().split("\n").filter(l => l.trim());
-      // Skip separator rows (|---|---|)
       const dataLines = lines.filter(l => !/^\|[\s\-:|]+\|$/.test(l));
       if (dataLines.length === 0) return match;
 
@@ -83,9 +89,9 @@ function renderMarkdown(text) {
     html = html.replace(new RegExp(`__(?:CODE|TABLE)_${i}__`), block);
   });
 
-  // Strip the step indicator line (Étape N/11) — it's shown in the progress bar
-  html = html.replace(/<p>\s*[ÉéEe]tape\s+\d{1,2}\s*\/\s*11\s*<\/p>/gi, '');
-  html = html.replace(/^[ÉéEe]tape\s+\d{1,2}\s*\/\s*11\s*<br\/>/gim, '');
+  // Strip the step indicator lines (Étape N/11 or Étape N/4)
+  html = html.replace(/<p>\s*[ÉéEe]tape\s+\d{1,2}\s*\/\s*\d{1,2}\s*<\/p>/gi, '');
+  html = html.replace(/^[ÉéEe]tape\s+\d{1,2}\s*\/\s*\d{1,2}\s*<br\/>/gim, '');
 
   return `<p>${html}</p>`;
 }
@@ -97,7 +103,7 @@ function renderInline(text) {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
-export default function WizardChat({ messages, onSend, isLoading, step }) {
+export default function WizardChat({ messages, onSend, isLoading, step, mode }) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -121,23 +127,29 @@ export default function WizardChat({ messages, onSend, isLoading, step }) {
     }
   };
 
+  // Choose step labels based on mode
+  const stepLabels = mode === "surprise" ? SURPRISE_STEP_LABELS : GUIDED_STEP_LABELS;
+  const showStepBar = mode !== null && mode !== undefined;
+
   return (
     <>
-      {/* Step progress bar */}
-      <div className={styles.stepBar}>
-        {STEP_LABELS.map((label, i) => {
-          const stepNum = i + 1;
-          let cls = styles.stepDot;
-          if (stepNum < step) cls += ` ${styles.completed}`;
-          else if (stepNum === step) cls += ` ${styles.active}`;
-          return (
-            <div key={stepNum} className={cls}>
-              <span className={styles.stepNumber}>{stepNum}</span>
-              {label}
-            </div>
-          );
-        })}
-      </div>
+      {/* Step progress bar — hidden until mode is chosen */}
+      {showStepBar && (
+        <div className={styles.stepBar}>
+          {stepLabels.map((label, i) => {
+            const stepNum = i + 1;
+            let cls = styles.stepDot;
+            if (stepNum < step) cls += ` ${styles.completed}`;
+            else if (stepNum === step) cls += ` ${styles.active}`;
+            return (
+              <div key={stepNum} className={cls}>
+                <span className={styles.stepNumber}>{stepNum}</span>
+                {label}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Messages */}
       <div className={styles.messages}>
@@ -177,7 +189,7 @@ export default function WizardChat({ messages, onSend, isLoading, step }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Decrivez votre monde..."
+          placeholder="Décris ton monde..."
           disabled={isLoading}
           rows={1}
         />
