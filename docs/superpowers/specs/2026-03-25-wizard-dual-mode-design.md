@@ -28,6 +28,8 @@ Kimi se présente et propose les deux modes de manière naturelle et conversatio
 
 Le system prompt de Kimi est modifié pour produire ce genre de greeting. Les instructions existantes (tutoiement, ton de conteur passionné, 3-5 phrases, français, pas de spoilers) restent en vigueur.
 
+**Message déclencheur** : le message utilisateur injecté par `start_wizard` (actuellement `"Commence le wizard. Demande-moi quel genre de monde je veux créer."`) est remplacé par `"Commence la conversation."` pour laisser le system prompt piloter le greeting sans conflit d'instructions.
+
 ### Mode guidé (inchangé)
 
 Si l'utilisateur choisit le mode guidé, le wizard continue exactement comme aujourd'hui : 11 étapes conversationnelles, barre de progression 11 points, bouton "Créer le monde" visible à partir de l'étape 8.
@@ -51,10 +53,22 @@ Quand le mode surprise a collecté les réponses :
 2. La tâche appelle Kimi pour générer le JSON complet (comme `finalize` actuel mais avec un prompt adapté au mode surprise)
 3. Auto-repair + validation (couches existantes inchangées)
 4. Sauvegarde en DB
+5. La tâche écrit le message final de Kimi et met à jour `session.current_step = 4` dans la session (via `async_session`, même pattern que les background tasks de simulation/narration qui écrivent dans `World`)
 
 ### Messages immersifs de progression
 
-Pendant la génération, des messages pré-définis (pas générés par Kimi) sont envoyés dans le chat via WebSocket à intervalles réguliers. Ils sont thématiques et ne spoilent rien du contenu réel :
+Pendant la génération, des messages pré-définis (pas générés par Kimi) sont envoyés via un **nouvel event type WebSocket `wizard_progress`**. Le payload est :
+
+```json
+{
+  "type": "wizard_progress",
+  "session_id": "...",
+  "message": "Je dessine les contours du monde...",
+  "step": 3
+}
+```
+
+Messages thématiques envoyés à intervalles réguliers, qui ne spoilent rien du contenu réel :
 
 - "Je dessine les contours du monde..."
 - "Des civilisations prennent forme..."
@@ -62,27 +76,60 @@ Pendant la génération, des messages pré-définis (pas générés par Kimi) so
 - "L'histoire s'écrit, siècle après siècle..."
 - "Les dernières touches..."
 
-Ces messages sont stockés dans la session comme des messages assistant normaux (persistés en DB).
+Ces messages sont **aussi persistés** dans `session.messages` (en tant que messages assistant) par la tâche background, pour qu'ils soient visibles lors d'une reprise de session.
+
+Le frontend écoute les events `wizard_progress` sur la page Wizard et les affiche comme des messages assistant dans le chat en temps réel.
 
 ### Message final
 
-Une fois la génération terminée et validée, un vrai message Kimi est généré (appel LLM) pour conclure naturellement, par exemple : "Ton monde est né. Tout est en place — à toi de le découvrir."
+Une fois la génération terminée et validée, la tâche background :
+1. Appelle Kimi pour un message de conclusion naturel (ex: "Ton monde est né. Tout est en place — à toi de le découvrir.")
+2. Persiste ce message dans `session.messages`
+3. Met à jour `session.current_step = 4` (étape "Prêt" en mode surprise)
+4. Met à jour `world.status = "configured"` et `world.config`
+5. Envoie un event WebSocket `wizard_complete` avec le `world_id`
 
-Le bouton "Découvrir le monde" apparaît alors.
+```json
+{
+  "type": "wizard_complete",
+  "session_id": "...",
+  "world_id": "...",
+  "world_name": "..."
+}
+```
+
+Le frontend affiche le bouton "Découvrir le monde" quand il reçoit `wizard_complete` ou quand l'historique retourne un `generation_status == "completed"`.
 
 ### Gestion des erreurs
 
 En cas d'échec de génération ou de validation :
-- Un message d'erreur clair est affiché dans le chat
-- Un bouton "Réessayer" permet de relancer la génération avec les mêmes paramètres
+- La tâche background persiste un message d'erreur dans `session.messages`
+- Un event WebSocket `wizard_error` est envoyé : `{"type": "wizard_error", "session_id": "...", "error": "..."}`
+- Le frontend affiche le message + un bouton "Réessayer" qui rappelle `POST /{session_id}/generate`
 
 ### Reprise de session
 
 L'utilisateur peut quitter la page et revenir à tout moment :
 
-- La session wizard a un champ `mode` (`null` | `"guided"` | `"surprise"`) et un `task_id` optionnel pour le job background
-- `GET /wizard/{session_id}/history` retourne l'historique des messages + l'état de la tâche background
-- **Tâche en cours** : les messages déjà émis sont affichés, reconnexion WebSocket pour les suivants
+- La session wizard a un champ `mode` (`null` | `"guided"` | `"surprise"`) et un `generation_task_id` (string nullable) pour le job background
+- `GET /wizard/{session_id}/history` retourne les champs supplémentaires :
+
+```json
+{
+  "session_id": "...",
+  "world_id": "...",
+  "messages": [...],
+  "step": 3,
+  "status": "active",
+  "mode": "surprise",
+  "generation_task_id": "task_xyz",
+  "generation_status": "running" | "completed" | "failed" | null
+}
+```
+
+`generation_status` est résolu au moment du GET : si `generation_task_id` est non-null, le backend interroge le `task_manager` pour obtenir le statut. **Si le task_id n'est pas trouvé dans le task_manager** (ex: redémarrage serveur), le statut est déduit de l'état de la session : si `world.status == "configured"` et `world.config` est non-null → `"completed"`, sinon → `"failed"`.
+
+- **Tâche en cours** : les messages déjà émis sont affichés (persistés en DB), reconnexion WebSocket pour les events `wizard_progress` suivants
 - **Tâche terminée** : tous les messages + bouton "Découvrir le monde"
 - **Tâche échouée** : messages + erreur + bouton "Réessayer"
 
@@ -94,21 +141,47 @@ Inchangée : 11 étapes (Genre, Ambiance, Géographie, Factions, Ressources, Pou
 
 ### Mode surprise
 
-Barre adaptée à 4 étapes :
+Barre adaptée à 4 étapes avec son propre domaine de valeurs (1-4, indépendant du 1-11 du mode guidé) :
 
-1. **Genre**
-2. **Envies**
-3. **Génération** (reste active pendant toute la phase background)
-4. **Prêt**
+1. **Genre** (step 1)
+2. **Envies** (step 2)
+3. **Génération** (step 3 — reste active pendant toute la phase background)
+4. **Prêt** (step 4 — positionné par la tâche background quand la génération est terminée)
 
-## Détection du mode
+Le frontend choisit quelle barre afficher selon `session.mode`. Tant que `mode` est `null` (premier message), aucune barre n'est affichée.
+
+## Détection du mode et des étapes
+
+### Marqueur de mode
 
 Le system prompt de Kimi inclut l'instruction d'ajouter un marqueur `[MODE:guided]` ou `[MODE:surprise]` dans sa réponse après le choix de l'utilisateur. Ce marqueur est strippé à l'affichage (même logique que `Étape N/11` actuellement).
 
-`_detect_step()` dans le router wizard est étendu pour :
-- Détecter le marqueur de mode via regex
-- Mettre à jour `session.mode`
-- En mode surprise : la progression passe de step 1 (choix) → step 2 (genre) → step 3 (envies) → step 11 (génération)
+### Refactoring de `_detect_step()`
+
+`_detect_step()` est refactoré pour retourner un tuple `(step: int | None, mode: str | None)` au lieu d'un simple int. L'appelant dans `send_message` se charge de persister les deux valeurs sur la session :
+
+```python
+step, mode = _detect_step(response_text, current_step, current_mode)
+if mode:
+    session.mode = mode
+if step:
+    session.current_step = step
+```
+
+### Progression en mode surprise
+
+En mode surprise, Kimi utilise le marqueur `Étape N/4` (au lieu de `Étape N/11`). `_detect_step()` détecte le dénominateur pour valider la cohérence avec le mode :
+- Mode `null` ou `guided` : `Étape N/11`
+- Mode `surprise` : `Étape N/4`
+
+### Garde sur l'endpoint `/generate`
+
+L'endpoint `POST /{session_id}/generate` vérifie les préconditions :
+- `session.mode == "surprise"`
+- `session.current_step >= 3` (les 2 questions ont été posées)
+- `session.generation_task_id` est null ou la tâche précédente a échoué (pas de double lancement)
+
+Sinon : HTTP 409 Conflict.
 
 ## Régénération depuis WorldView
 
@@ -118,15 +191,20 @@ Un bouton "Régénérer le monde" est ajouté sur la page WorldView, visible que
 
 ### Avertissement
 
-Si le monde a un statut avancé (`simulated`, `narrated`, `exported`), un dialogue de confirmation avertit que la simulation, narration et/ou export seront perdus.
+Si le monde a un statut avancé (`simulated`, `narrated`, `exported`), un dialogue de confirmation avertit que la simulation, narration et/ou export seront perdus. Le nettoyage est côté DB uniquement — les pages Bookstack éventuellement créées ne sont pas supprimées automatiquement (nettoyage manuel si nécessaire, hors scope de cette feature).
 
 ### Comportement
 
-1. Appel `POST /wizard/{session_id}/regenerate` (ou réutilisation de `finalize` + `validate`)
-2. Le backend relance la génération JSON à partir de la conversation wizard existante (mode guidé ou surprise)
-3. Auto-repair + validation
-4. Sauvegarde en DB, statut remis à `"configured"`, suppression des données de simulation/narration/export
-5. La page WorldView se rafraîchit avec le nouveau monde
+`POST /worlds/{world_id}/regenerate` — tâche background (pas synchrone, la génération prend 10-30s) :
+
+1. Retrouve la `WizardSession` associée au monde
+2. Lance une tâche background qui :
+   - Appelle Kimi pour regénérer le JSON (comme `finalize`, à partir de la conversation wizard complète)
+   - Auto-repair + validation
+   - Sauvegarde `world.config`, remet `world.status = "configured"`
+   - Efface `world.timeline`, `world.narrative_blocks`, `world.bookstack_mapping` (→ `null`)
+3. Retourne un `task_id` au frontend
+4. Le frontend affiche un spinner/état de progression et rafraîchit la page WorldView quand la tâche est terminée (via `task_manager` WebSocket events existants)
 
 ## Modifications par fichier
 
@@ -134,19 +212,20 @@ Si le monde a un statut avancé (`simulated`, `narrated`, `exported`), un dialog
 
 | Fichier | Modification |
 |---------|-------------|
-| `app/services/wizard_prompt.py` | System prompt modifié : greeting avec choix de mode, instructions mode surprise (2-3 questions, ne rien révéler, marqueur `[MODE:...]`) |
-| `app/routers/wizard.py` | Champ `mode` sur `WizardSession` ; `_detect_step()` étendu pour détecter le mode ; nouvel endpoint `POST /{session_id}/generate` pour génération background ; endpoint `POST /{session_id}/regenerate` pour régénération ; messages immersifs via WebSocket |
-| `app/models/wizard_session.py` | Ajout colonne `mode` (string nullable) et `generation_task_id` (string nullable) |
+| `app/services/wizard_prompt.py` | System prompt modifié : greeting avec choix de mode, instructions mode surprise (2-3 questions, ne rien révéler, marqueurs `[MODE:...]` et `Étape N/4`) |
+| `app/routers/wizard.py` | `start_wizard` : message déclencheur changé ; `_detect_step()` retourne `(step, mode)` ; nouvel endpoint `POST /{session_id}/generate` (background, avec gardes) ; `history` retourne `mode`, `generation_task_id`, `generation_status` ; nouveaux events WebSocket `wizard_progress`, `wizard_complete`, `wizard_error` |
+| `app/routers/worlds.py` | Nouvel endpoint `POST /{world_id}/regenerate` (background task) |
+| `app/models/wizard_session.py` | Ajout colonnes `mode` (string nullable) et `generation_task_id` (string nullable) |
 | Migration Alembic | Nouvelle migration pour les colonnes `mode` et `generation_task_id` |
 
 ### Frontend
 
 | Fichier | Modification |
 |---------|-------------|
-| `src/pages/Wizard.jsx` | Gestion du champ `mode` ; en mode surprise : lancement auto de la génération après 2e réponse, reconnexion WebSocket pour progression, bouton "Découvrir le monde" |
-| `src/components/WizardChat.jsx` | Barre de progression adaptée (4 étapes en mode surprise vs 11 en mode guidé) ; messages immersifs affichés normalement |
-| `src/pages/WorldView.jsx` | Bouton "Régénérer le monde" + dialogue de confirmation si données avancées |
-| `src/services/api.js` | Nouveaux appels : `wizard.generate(sessionId)`, `wizard.regenerate(sessionId)` |
+| `src/pages/Wizard.jsx` | Gestion du champ `mode` ; écoute events WebSocket `wizard_progress`/`wizard_complete`/`wizard_error` ; en mode surprise : lancement auto de `generate` après step 3, bouton "Découvrir le monde" sur `wizard_complete` ou `generation_status == "completed"` |
+| `src/components/WizardChat.jsx` | Barre de progression conditionnelle (4 étapes si mode surprise, 11 si mode guidé, cachée si mode null) ; messages immersifs affichés comme messages assistant |
+| `src/pages/WorldView.jsx` | Bouton "Régénérer le monde" + dialogue de confirmation si statut avancé ; spinner pendant la régénération |
+| `src/services/api.js` | Nouveaux appels : `wizard.generate(sessionId)`, `worlds.regenerate(worldId)` |
 
 ## Ce qui ne change PAS
 
@@ -154,4 +233,4 @@ Si le monde a un statut avancé (`simulated`, `narrated`, `exported`), un dialog
 - L'auto-repair et la validation JSON
 - Le schema `world_config.json`
 - Le simulateur, la narration, l'export
-- Le `task_manager` et le système WebSocket (réutilisés tels quels)
+- Le `task_manager` (réutilisé tel quel, nouveaux event types ajoutés au WebSocket)
