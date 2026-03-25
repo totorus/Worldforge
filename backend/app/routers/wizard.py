@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.database import get_db
 from app.models.session import WizardSession
@@ -59,7 +60,9 @@ async def start_wizard(
         temperature=0.7,
     )
 
-    session.messages.append({"role": "assistant", "content": greeting})
+    # Persist greeting — must replace the list to trigger JSONB change detection
+    session.messages = [*session.messages, {"role": "assistant", "content": greeting}]
+    flag_modified(session, "messages")
     await db.commit()
 
     return WizardResponse(
@@ -78,14 +81,16 @@ async def send_message(
 ):
     session = await _get_session(session_id, current_user.id, db)
 
-    # Add user message
-    session.messages.append({"role": "user", "content": body.content})
+    # Build new messages list (replace, don't mutate in-place)
+    new_messages = [*session.messages, {"role": "user", "content": body.content}]
 
     # Get LLM response
-    response = await kimi_client.chat_completion(session.messages, temperature=0.7)
+    response = await kimi_client.chat_completion(new_messages, temperature=0.7)
 
-    # Add assistant response
-    session.messages.append({"role": "assistant", "content": response})
+    # Append assistant response
+    new_messages.append({"role": "assistant", "content": response})
+    session.messages = new_messages
+    flag_modified(session, "messages")
 
     # Try to detect step progression
     session.current_step = _detect_step(response, session.current_step)
@@ -110,6 +115,7 @@ async def get_history(
     visible = [m for m in session.messages if m["role"] != "system"]
     return {
         "session_id": str(session.id),
+        "world_id": str(session.world_id) if session.world_id else None,
         "messages": visible,
         "step": session.current_step,
         "status": session.status,
@@ -125,19 +131,40 @@ async def finalize(
     session = await _get_session(session_id, current_user.id, db)
 
     # Ask LLM to produce the final JSON
-    session.messages.append({
+    new_messages = [*session.messages, {
         "role": "user",
         "content": "Produis maintenant le JSON de configuration complet pour ce monde. "
                    "Mets-le dans un bloc ```json ... ```. Assure-toi qu'il est valide et complet.",
-    })
+    }]
 
     response = await kimi_client.chat_completion(
-        session.messages,
-        temperature=0.3,  # Lower temperature for structured output
-        max_tokens=8192,
+        new_messages,
+        temperature=0.3,
+        max_tokens=16384,
     )
 
-    session.messages.append({"role": "assistant", "content": response})
+    # If JSON is truncated (has ```json but no closing ```), ask Kimi to continue
+    if "```json" in response:
+        after_json = response.split("```json", 1)[-1]
+        # Count ``` occurrences after the opening — if none, it's truncated
+        closing_count = after_json.count("```")
+        if closing_count == 0:
+            new_messages.append({"role": "assistant", "content": response})
+            new_messages.append({"role": "user", "content": "Continue le JSON exactement où tu t'es arrêté, sans répéter ce qui précède. Termine avec ```."})
+            continuation = await kimi_client.chat_completion(
+                new_messages,
+                temperature=0.3,
+                max_tokens=16384,
+            )
+            response = response + continuation
+
+    new_messages = [*session.messages, {
+        "role": "user",
+        "content": "Produis maintenant le JSON de configuration complet pour ce monde. "
+                   "Mets-le dans un bloc ```json ... ```. Assure-toi qu'il est valide et complet.",
+    }, {"role": "assistant", "content": response}]
+    session.messages = new_messages
+    flag_modified(session, "messages")
     await db.commit()
 
     return WizardResponse(
@@ -162,6 +189,9 @@ async def validate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Aucun JSON de configuration trouvé dans la conversation. Utilisez /finalize d'abord.",
         )
+
+    # Auto-repair common LLM generation issues before validation
+    config = _auto_repair_config(config)
 
     # Validate
     errors = validate_world_config(config)
@@ -206,39 +236,252 @@ async def _get_session(session_id: str, user_id, db: AsyncSession) -> WizardSess
 
 
 def _extract_json_from_messages(messages: list[dict]) -> dict | None:
-    """Extract the last JSON block from assistant messages."""
+    """Extract the last JSON block from assistant messages.
+
+    Handles both complete (```json...```) and truncated blocks.
+    """
     for msg in reversed(messages):
         if msg["role"] != "assistant":
             continue
-        # Look for ```json ... ``` blocks
-        matches = re.findall(r"```json\s*\n(.*?)\n```", msg["content"], re.DOTALL)
+        content = msg["content"]
+        # Look for ```json ... ``` blocks (complete)
+        matches = re.findall(r"```json\s*\n(.*?)\n```", content, re.DOTALL)
         if matches:
             try:
                 return json.loads(matches[-1])
+            except json.JSONDecodeError:
+                pass
+        # Fallback: try extracting from ```json to end (truncated block)
+        idx = content.find("```json")
+        if idx >= 0:
+            raw = content[idx + 7:].strip()
+            # Remove closing ``` if present
+            close = raw.rfind("```")
+            if close > 0:
+                raw = raw[:close].strip()
+            try:
+                return json.loads(raw)
             except json.JSONDecodeError:
                 continue
     return None
 
 
-def _detect_step(response: str, current_step: int) -> int:
-    """Simple heuristic to detect wizard step from LLM response."""
-    keywords = {
-        2: ["chaos", "subversion", "curseur"],
-        3: ["géographie", "région", "terrain"],
-        4: ["faction", "gouvernance", "peuple"],
-        5: ["ressource", "matière"],
-        6: ["technologie", "pouvoir", "arbre tech"],
-        7: ["événement", "black swan", "catastrophe"],
-        8: ["personnage", "rôle", "héros"],
-        9: ["état initial", "condition de départ", "population initiale"],
-        10: ["durée", "simulation", "tick", "années"],
-        11: ["résumé", "validation", "confirmation", "récapitulatif"],
-    }
+def _safe_id(item) -> str | None:
+    """Extract ID from an item that could be a string or a dict with 'id'/'target' key."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        return item.get("id") or item.get("target")
+    return None
 
-    response_lower = response.lower()
-    for step, words in keywords.items():
-        if step > current_step:
-            if any(w in response_lower for w in words):
-                return step
+
+def _safe_ids(items) -> set[str]:
+    """Extract a set of IDs from a list of items (strings or dicts)."""
+    if not isinstance(items, list):
+        return set()
+    return {_safe_id(item) for item in items} - {None}
+
+
+def _auto_repair_config(config: dict) -> dict:
+    """Fix common issues in LLM-generated configs so validation passes.
+
+    Target format (JSON Schema):
+    - connections: [{target: str, traversal_difficulty: float}, ...]
+    - tech_tree: {nodes: [{id, name, prerequisites, ...}, ...]}
+    - event_pool: flat list with is_black_swan boolean
+    """
+
+    # --- 0. Normalize top-level containers ---
+
+    # tech_tree: ensure {nodes: [...]}
+    tech_tree = config.get("tech_tree", {"nodes": []})
+    if isinstance(tech_tree, list):
+        # Flat list of tech dicts → wrap in {nodes: [...]}
+        config["tech_tree"] = {"nodes": [t for t in tech_tree if isinstance(t, dict)]}
+    elif isinstance(tech_tree, dict) and "nodes" not in tech_tree:
+        config["tech_tree"] = {"nodes": []}
+    elif not isinstance(tech_tree, dict):
+        config["tech_tree"] = {"nodes": []}
+    tech_nodes = config["tech_tree"]["nodes"]
+
+    # event_pool: ensure flat list
+    event_pool = config.get("event_pool", [])
+    if isinstance(event_pool, dict):
+        # {normal_events: [...], black_swans: [...]} → merge into flat list
+        flat = []
+        for evt in event_pool.get("normal_events", []):
+            if isinstance(evt, dict):
+                evt.setdefault("is_black_swan", False)
+                flat.append(evt)
+        for evt in event_pool.get("black_swans", []):
+            if isinstance(evt, dict):
+                evt["is_black_swan"] = True
+                flat.append(evt)
+        config["event_pool"] = flat
+    elif not isinstance(event_pool, list):
+        config["event_pool"] = []
+
+    # geography
+    geography = config.get("geography", {})
+    if not isinstance(geography, dict):
+        config["geography"] = {"regions": []}
+        geography = config["geography"]
+    regions = geography.get("regions", [])
+    if not isinstance(regions, list):
+        regions = []
+        geography["regions"] = regions
+    regions = [r for r in regions if isinstance(r, dict) and "id" in r]
+    geography["regions"] = regions
+    region_ids = {r["id"] for r in regions}
+
+    # --- 1. Normalize connections to {target, traversal_difficulty} objects ---
+    for region in regions:
+        conns = region.get("connections", [])
+        if not isinstance(conns, list):
+            conns = []
+        normalized = []
+        for conn in conns:
+            if isinstance(conn, str):
+                # String ID → convert to object with default difficulty
+                if conn in region_ids and conn != region["id"]:
+                    normalized.append({"target": conn, "traversal_difficulty": 0.5})
+            elif isinstance(conn, dict):
+                target = conn.get("target") or conn.get("id")
+                if target and target in region_ids and target != region["id"]:
+                    normalized.append({
+                        "target": target,
+                        "traversal_difficulty": conn.get("traversal_difficulty", 0.5),
+                    })
+        region["connections"] = normalized
+
+    # Ensure bidirectional connections
+    conn_map = {}
+    for region in regions:
+        for conn in region["connections"]:
+            conn_map.setdefault(region["id"], set()).add(conn["target"])
+    for region in regions:
+        for conn in region["connections"]:
+            target = conn["target"]
+            if region["id"] not in conn_map.get(target, set()):
+                # Find the target region and add reverse connection
+                for other in regions:
+                    if other["id"] == target:
+                        other["connections"].append({
+                            "target": region["id"],
+                            "traversal_difficulty": conn["traversal_difficulty"],
+                        })
+                        conn_map.setdefault(target, set()).add(region["id"])
+                        break
+
+    # --- 2. Ensure all referenced resources exist ---
+    resource_ids = _safe_ids(config.get("resources", []))
+    for region in regions:
+        res = region.get("resources", [])
+        if isinstance(res, list):
+            region["resources"] = [r for r in res if (r if isinstance(r, str) else "") in resource_ids]
+        else:
+            region["resources"] = []
+
+    # --- 3. Ensure all referenced techs in initial_state exist + auto-add prerequisites ---
+    tech_ids = {t["id"] for t in tech_nodes if isinstance(t, dict) and "id" in t}
+    tech_prereqs = {t["id"]: t.get("prerequisites", []) for t in tech_nodes if isinstance(t, dict) and "id" in t}
+    initial_state = config.get("initial_state", {})
+    if not isinstance(initial_state, dict):
+        config["initial_state"] = {"faction_states": [], "initial_relations": []}
+        initial_state = config["initial_state"]
+    for fs in initial_state.get("faction_states", []):
+        if isinstance(fs, dict):
+            techs = fs.get("unlocked_techs", [])
+            if isinstance(techs, list):
+                fs["unlocked_techs"] = [t for t in techs if t in tech_ids]
+            else:
+                fs["unlocked_techs"] = []
+            # Auto-add missing prerequisites
+            added = True
+            while added:
+                added = False
+                unlocked = set(fs["unlocked_techs"])
+                for tid in list(unlocked):
+                    for prereq in tech_prereqs.get(tid, []):
+                        if prereq in tech_ids and prereq not in unlocked:
+                            fs["unlocked_techs"].append(prereq)
+                            added = True
+
+    # --- 4. Ensure all referenced regions in faction_states exist ---
+    for fs in initial_state.get("faction_states", []):
+        if isinstance(fs, dict):
+            sr = fs.get("starting_regions", [])
+            if isinstance(sr, list):
+                fs["starting_regions"] = [r for r in sr if r in region_ids]
+            else:
+                fs["starting_regions"] = []
+
+    # --- 5. Ensure all faction_ids in initial_state exist ---
+    faction_ids = _safe_ids(config.get("factions", []))
+    initial_state["faction_states"] = [
+        fs for fs in initial_state.get("faction_states", [])
+        if isinstance(fs, dict) and fs.get("faction_id") in faction_ids
+    ]
+
+    # --- 6. Ensure relations reference existing factions ---
+    initial_state["initial_relations"] = [
+        r for r in initial_state.get("initial_relations", [])
+        if isinstance(r, dict) and r.get("faction_a") in faction_ids and r.get("faction_b") in faction_ids
+    ]
+
+    # --- 7. Remove cascades from non-black-swan events & validate cascade refs ---
+    all_event_ids = {e.get("id", "") for e in config["event_pool"] if isinstance(e, dict)}
+    for evt in config["event_pool"]:
+        if not isinstance(evt, dict):
+            continue
+        if not evt.get("is_black_swan"):
+            evt.pop("cascade", None)
+        else:
+            cascades = evt.get("cascade", [])
+            if isinstance(cascades, list):
+                evt["cascade"] = [
+                    c for c in cascades
+                    if isinstance(c, dict) and c.get("event") in all_event_ids
+                ]
+
+    # --- 8. Clamp numeric faction attributes to 0-1 ---
+    for faction in config.get("factions", []):
+        if not isinstance(faction, dict):
+            continue
+        attrs = faction.get("attributes", {})
+        if isinstance(attrs, dict):
+            for key, val in attrs.items():
+                if isinstance(val, (int, float)):
+                    attrs[key] = max(0.0, min(1.0, float(val)))
+
+    # --- 9. Ensure meta has required fields with defaults ---
+    meta = config.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        config["meta"] = {}
+        meta = config["meta"]
+    meta.setdefault("seed", 42)
+    meta.setdefault("simulation_years", 500)
+    meta.setdefault("tick_duration_years", 5)
+    meta.setdefault("chaos_level", 0.3)
+    meta.setdefault("trope_subversion", 0.5)
+    if meta.get("tick_duration_years") not in (1, 5, 10):
+        meta["tick_duration_years"] = 5
+
+    return config
+
+
+def _detect_step(response: str, current_step: int) -> int:
+    """Detect wizard step from LLM response by looking for explicit step markers.
+
+    Looks for patterns like 'Étape 3', 'étape 5/11', 'Etape 4' in the response.
+    Only advances forward, never backwards.
+    """
+    # Look for explicit "Étape N" or "Etape N" patterns
+    matches = re.findall(r"[ÉéEe]tape\s+(\d{1,2})(?:\s*/\s*11)?", response, re.IGNORECASE)
+    if matches:
+        # Take the highest step mentioned
+        detected = max(int(m) for m in matches)
+        if 1 <= detected <= 11 and detected >= current_step:
+            return detected
 
     return current_step

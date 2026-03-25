@@ -1,3 +1,4 @@
+from app.narrator.json_utils import extract_json
 """Character biographies — generates rich biographies for notable characters."""
 
 import json
@@ -129,7 +130,7 @@ async def generate_biographies(
     )
 
     try:
-        bios = json.loads(response.strip())
+        bios = extract_json(response)
         if not isinstance(bios, list):
             raise ValueError("Expected a JSON list")
         return bios

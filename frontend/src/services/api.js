@@ -32,7 +32,6 @@ export async function apiFetch(path, options = {}) {
     }
     localStorage.removeItem("token");
     localStorage.removeItem("refresh_token");
-    window.location.href = "/login";
     throw new ApiError(401, "Session expirée");
   }
 

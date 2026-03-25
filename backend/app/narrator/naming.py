@@ -1,3 +1,4 @@
+from app.narrator.json_utils import extract_json
 """Naming module — generates proper names for characters using LLM."""
 
 import json
@@ -70,10 +71,10 @@ async def generate_names(config: dict, timeline: dict) -> dict[str, str]:
     ]
 
     logger.info("Generating names for %d character placeholders", len(placeholders))
-    response = await llm_router.complete(task="naming", messages=messages, temperature=0.8, max_tokens=2048)
+    response = await llm_router.complete(task="naming", messages=messages, temperature=0.8, max_tokens=4096)
 
     try:
-        names = json.loads(response.strip())
+        names = extract_json(response)
         if not isinstance(names, dict):
             raise ValueError("Expected a JSON object")
         return names

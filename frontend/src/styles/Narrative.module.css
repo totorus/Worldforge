@@ -95,12 +95,47 @@
   font-size: 1.1rem;
 }
 
+.block h4 {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin-bottom: 6px;
+  margin-top: 0;
+}
+
 .block p {
   margin-bottom: 12px;
 }
 
 .block p:last-child {
   margin-bottom: 0;
+}
+
+.paragraph {
+  margin-bottom: 12px;
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: normal;
+}
+
+.subSection {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.subSection ul {
+  padding-left: 20px;
+  margin: 8px 0 0 0;
+}
+
+.subSection li {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.6;
 }
 
 .coherenceReport {

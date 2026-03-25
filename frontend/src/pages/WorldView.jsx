@@ -124,14 +124,14 @@ export default function WorldView() {
 
   const config = world?.config || {};
   const status = world?.status || "draft";
-  const canSimulate = status === "configured";
-  const canNarrate = status === "simulated";
-  const canExport = status === "narrated";
+  const canSimulate = ["configured", "simulated", "narrated", "exported"].includes(status);
+  const canNarrate = ["simulated", "narrated", "exported"].includes(status);
+  const canExport = ["narrated", "exported"].includes(status);
 
   const factionCount = config.factions?.length || 0;
-  const regionCount = config.regions?.length || 0;
+  const regionCount = config.geography?.regions?.length || 0;
   const resourceCount = config.resources?.length || 0;
-  const timelineYears = config.timeline?.duration_years || config.simulation_years || 0;
+  const timelineYears = config.meta?.simulation_years || world?.simulation_years || 0;
 
   return (
     <div className={styles.container}>

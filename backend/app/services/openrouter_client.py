@@ -1,9 +1,12 @@
 """OpenRouter API client for Mistral Small Creative and Mistral Small 4."""
 
 import httpx
+import logging
 
 from app.config import settings
 from app.services.openrouter_models import MODELS
+
+logger = logging.getLogger("worldforge.openrouter")
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -33,9 +36,16 @@ async def chat_completion(
                 "max_tokens": max_tokens,
             },
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            print(f"[OpenRouter] ERROR {response.status_code} for {model_id}: {response.text[:500]}", flush=True)
+            response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"].get("content") or ""
+        finish = data["choices"][0].get("finish_reason", "?")
+        print(f"[OpenRouter] model={model_id} status={response.status_code} content_len={len(content)} finish={finish}", flush=True)
+        if not content:
+            print(f"[OpenRouter] EMPTY CONTENT! Full response: {response.text[:1000]}", flush=True)
+        return content
 
 
 async def chat_completion_stream(

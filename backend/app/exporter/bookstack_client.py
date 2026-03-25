@@ -96,6 +96,30 @@ class BookstackClient:
     async def _get(self, path: str) -> dict[str, Any]:
         return await self._request("GET", path)
 
+    async def _delete(self, path: str) -> None:
+        """DELETE request (no JSON body expected back)."""
+        url = f"{self.base_url}/api{path}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(url, headers=self._headers)
+        resp.raise_for_status()
+
+    # ------------------------------------------------------------------
+    # Listing / search helpers
+    # ------------------------------------------------------------------
+
+    async def list_shelves(self) -> list[dict[str, Any]]:
+        """GET /api/shelves — return all shelves."""
+        result = await self._get("/shelves")
+        return result.get("data", [])
+
+    async def find_shelf_by_name(self, name: str) -> dict[str, Any] | None:
+        """Find a shelf by exact name, or return None."""
+        shelves = await self.list_shelves()
+        for s in shelves:
+            if s.get("name") == name:
+                return s
+        return None
+
     # ------------------------------------------------------------------
     # Shelves
     # ------------------------------------------------------------------

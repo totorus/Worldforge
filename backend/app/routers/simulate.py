@@ -170,10 +170,10 @@ async def simulate(
             detail="Le monde n'a pas de configuration — configurez-le d'abord",
         )
 
-    if world.status != "configured":
+    if world.status not in ("configured", "simulated", "narrated", "exported"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Le monde doit être au statut 'configured' pour lancer une simulation (statut actuel : '{world.status}')",
+            detail=f"Le monde doit être configuré pour lancer une simulation (statut actuel : '{world.status}')",
         )
 
     task = create_task(type="simulation", world_id=str(world.id), user_id=str(user.id))

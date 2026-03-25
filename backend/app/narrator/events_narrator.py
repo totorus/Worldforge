@@ -1,3 +1,4 @@
+from app.narrator.json_utils import extract_json
 """Event narratives — generates narrative descriptions for significant events."""
 
 import json
@@ -120,7 +121,7 @@ async def narrate_events(events: list, config: dict, eras: list) -> list[dict]:
         )
 
         try:
-            era_narrated = json.loads(response.strip())
+            era_narrated = extract_json(response)
             if isinstance(era_narrated, list):
                 narrated_events.extend(era_narrated)
             else:

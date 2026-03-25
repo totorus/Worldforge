@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
+from app.models.session import WizardSession
 from app.models.world import World
 from app.services.auth import get_current_user
 from app.services.world_validator import validate_world_config
@@ -128,8 +129,14 @@ async def delete_world(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Supprime un monde."""
+    """Supprime un monde et ses sessions wizard associées."""
     world = await _get_user_world(world_id, db, user)
+    # Delete related wizard sessions first (FK constraint)
+    sessions = await db.execute(
+        select(WizardSession).where(WizardSession.world_id == world.id)
+    )
+    for session in sessions.scalars().all():
+        await db.delete(session)
     await db.delete(world)
     await db.commit()
     return {"message": "Monde supprimé"}

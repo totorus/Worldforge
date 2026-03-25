@@ -24,7 +24,7 @@ function ProtectedRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
 
-  return children;
+  return <TaskProvider>{children}</TaskProvider>;
 }
 
 function AppRoutes() {
@@ -54,9 +54,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <TaskProvider>
-          <AppRoutes />
-        </TaskProvider>
+        <AppRoutes />
       </AuthProvider>
     </BrowserRouter>
   );

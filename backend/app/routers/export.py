@@ -168,9 +168,10 @@ async def export_world_to_bookstack(
 ):
     """Run the full Bookstack export for a narrated world (background task).
 
-    Creates a shelf with 7 books covering geography, history, factions,
-    characters, technologies, legends, and annexes.  Saves the Bookstack
-    mapping to the world record and updates the status to ``published``.
+    Creates (or reuses) the shared "WorldForge" shelf, then a single book
+    for this world with 7 chapters (Atlas, Chroniques, Factions, Personnages,
+    Technologies, Légendes, Annexes).  Injects cross-references between pages.
+    Saves the mapping and updates the status to ``published``.
     """
     _check_bookstack_configured()
     world = await _get_user_world(world_id, db, user)

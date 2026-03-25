@@ -1,3 +1,4 @@
+from app.narrator.json_utils import extract_json
 """Era splitting — identifies major turning points and splits the timeline into named eras."""
 
 import json
@@ -100,7 +101,7 @@ async def split_into_eras(config: dict, timeline: dict) -> list[dict]:
     response = await llm_router.complete(task="era_splitting", messages=messages, temperature=0.6, max_tokens=4096)
 
     try:
-        eras = json.loads(response.strip())
+        eras = extract_json(response)
         if not isinstance(eras, list):
             raise ValueError("Expected a JSON list")
         # Validate structure

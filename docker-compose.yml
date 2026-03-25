@@ -11,14 +11,15 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "8099:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://worldforge:${POSTGRES_PASSWORD}@postgres:5432/worldforge
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - KIMI_API_KEY=${KIMI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - BOOKSTACK_URL=http://bookstack:8080
+      - BOOKSTACK_URL=http://bookstack:80
+      - BOOKSTACK_PUBLIC_URL=${BOOKSTACK_PUBLIC_URL:-https://worlds.ssantoro.fr}
       - BOOKSTACK_TOKEN_ID=${BOOKSTACK_TOKEN_ID}
       - BOOKSTACK_TOKEN_SECRET=${BOOKSTACK_TOKEN_SECRET}
     depends_on:
@@ -53,6 +54,7 @@ services:
   bookstack:
     image: lscr.io/linuxserver/bookstack:latest
     environment:
+      - APP_KEY=${BOOKSTACK_APP_KEY}
       - APP_URL=${BOOKSTACK_PUBLIC_URL:-https://worlds.ssantoro.fr}
       - DB_HOST=bookstack-db
       - DB_PORT=3306
@@ -60,7 +62,7 @@ services:
       - DB_PASS=${BOOKSTACK_DB_PASSWORD}
       - DB_DATABASE=bookstack
     ports:
-      - "6875:8080"
+      - "6875:80"
     volumes:
       - bookstack_data:/config
     depends_on:

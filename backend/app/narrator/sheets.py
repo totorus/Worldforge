@@ -1,3 +1,4 @@
+from app.narrator.json_utils import extract_json
 """Faction and region sheets — generates rich narrative descriptions."""
 
 import json
@@ -70,7 +71,7 @@ async def generate_faction_sheet(faction_config: dict, faction_history: list) ->
     )
 
     try:
-        sheet = json.loads(response.strip())
+        sheet = extract_json(response)
         if not isinstance(sheet, dict):
             raise ValueError("Expected a JSON object")
         sheet["id"] = faction_id
@@ -150,7 +151,7 @@ async def generate_region_sheet(region_config: dict, region_history: list) -> di
     )
 
     try:
-        sheet = json.loads(response.strip())
+        sheet = extract_json(response)
         if not isinstance(sheet, dict):
             raise ValueError("Expected a JSON object")
         sheet["id"] = region_id

@@ -1,3 +1,4 @@
+from app.narrator.json_utils import extract_json
 """Legends and myths — creates legends based on the world's history."""
 
 import json
@@ -81,7 +82,7 @@ async def generate_legends(config: dict, eras: list, narrative_blocks: dict) -> 
     )
 
     try:
-        legends = json.loads(response.strip())
+        legends = extract_json(response)
         if not isinstance(legends, list):
             raise ValueError("Expected a JSON list")
         return legends
