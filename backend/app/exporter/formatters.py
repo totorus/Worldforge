@@ -137,6 +137,10 @@ def _markdown_to_html(text: str) -> str:
     if not text:
         return ""
 
+    # Guard against non-string values (LLM may produce dicts/lists)
+    if not isinstance(text, str):
+        text = str(text)
+
     text = text.strip()
     paragraphs = text.split("\n\n")
     parts: list[str] = []
@@ -436,10 +440,21 @@ def format_character_page(character: dict, biography: str | None = None) -> str:
         meta_parts.append(f"<strong>Rôle :</strong> {_e(role)}")
     if faction:
         meta_parts.append(f"<strong>Faction :</strong> {_e(faction)}")
+    race = character.get("race", "")
+    if race:
+        meta_parts.append(f"<strong>Race :</strong> {_e(race)}")
     meta_parts.append(f"<strong>Naissance :</strong> année {_e(born)}")
     if died:
         meta_parts.append(f"<strong>Décès :</strong> année {_e(died)}")
+    statut = character.get("statut_actuel", "")
+    if statut:
+        meta_parts.append(f"<strong>Statut :</strong> {_e(statut)}")
     parts.append(f"<p>{'<br/>'.join(meta_parts)}</p>")
+
+    # Physical description
+    description_physique = character.get("description_physique", "")
+    if description_physique:
+        parts.append(f"<h3>Description physique</h3>{_markdown_to_html(description_physique)}")
 
     # Personality
     personality = character.get("personality", "")
@@ -521,6 +536,195 @@ def format_legend_page(legend: dict) -> str:
     if moral:
         parts.append(f"<blockquote><em>{_markdown_to_html(moral)}</em></blockquote>")
 
+    return "\n".join(parts)
+
+
+def format_race_page(race: dict) -> str:
+    """Format a race/people page."""
+    parts: list[str] = []
+    name = race.get("name", "Peuple inconnu")
+    parts.append(f"<h2>{_e(name)}</h2>")
+
+    if race.get("description_physique"):
+        parts.append(f"<h3>Description physique</h3>{_markdown_to_html(race['description_physique'])}")
+    if race.get("esperance_de_vie"):
+        parts.append(f"<p><strong>Espérance de vie :</strong> {_e(race['esperance_de_vie'])}</p>")
+    if race.get("philosophie"):
+        parts.append(f"<h3>Philosophie & Valeurs</h3>{_markdown_to_html(race['philosophie'])}")
+    if race.get("rapport_magie"):
+        parts.append(f"<h3>Rapport à la magie</h3>{_markdown_to_html(race['rapport_magie'])}")
+    if race.get("rapport_technologie"):
+        parts.append(f"<h3>Rapport à la technologie</h3>{_markdown_to_html(race['rapport_technologie'])}")
+
+    factions = race.get("factions_associees", [])
+    if factions:
+        items = "".join(f"<li>{_e(f)}</li>" for f in factions) if isinstance(factions, list) else f"<li>{_e(factions)}</li>"
+        parts.append(f"<h3>Factions associées</h3><ul>{items}</ul>")
+
+    regions = race.get("regions_habitat", [])
+    if regions:
+        items = "".join(f"<li>{_e(r)}</li>" for r in regions) if isinstance(regions, list) else f"<li>{_e(regions)}</li>"
+        parts.append(f"<h3>Régions d'habitat</h3><ul>{items}</ul>")
+
+    relations = race.get("relations_inter_races", "")
+    if relations:
+        if isinstance(relations, str):
+            parts.append(f"<h3>Relations inter-races</h3>{_markdown_to_html(relations)}")
+        elif isinstance(relations, list):
+            items = "".join(f"<li>{_e(r)}</li>" for r in relations)
+            parts.append(f"<h3>Relations inter-races</h3><ul>{items}</ul>")
+
+    traits = race.get("traits_culturels", "")
+    if traits:
+        if isinstance(traits, str):
+            parts.append(f"<h3>Traits culturels</h3>{_markdown_to_html(traits)}")
+        elif isinstance(traits, list):
+            items = "".join(f"<li>{_e(t)}</li>" for t in traits)
+            parts.append(f"<h3>Traits culturels</h3><ul>{items}</ul>")
+
+    return "\n".join(parts)
+
+
+def format_cosmogony_page(cosmo: dict) -> str:
+    """Format a cosmogony page."""
+    parts: list[str] = []
+    title = cosmo.get("name", "Cosmogonie inconnue")
+    parts.append(f"<h2>{_e(title)}</h2>")
+    parts.append(f"<p><em>Peuple : {_e(cosmo.get('race', '?'))}</em></p>")
+
+    if cosmo.get("creation_du_monde"):
+        parts.append(f"<h3>Création du monde</h3>{_markdown_to_html(cosmo['creation_du_monde'])}")
+
+    divinites = cosmo.get("divinites", [])
+    if divinites:
+        items = "".join(f"<li>{_e(d) if isinstance(d, str) else _e(d.get('name', '?'))}</li>" for d in divinites)
+        parts.append(f"<h3>Divinités & Forces primordiales</h3><ul>{items}</ul>")
+
+    if cosmo.get("naissance_du_peuple"):
+        parts.append(f"<h3>Naissance du peuple</h3>{_markdown_to_html(cosmo['naissance_du_peuple'])}")
+    if cosmo.get("valeurs_fondatrices"):
+        parts.append(f"<h3>Valeurs fondatrices</h3>{_markdown_to_html(cosmo['valeurs_fondatrices'])}")
+    if cosmo.get("recit_complet"):
+        parts.append(f"<h3>Récit mythique</h3>{_markdown_to_html(cosmo['recit_complet'])}")
+
+    return "\n".join(parts)
+
+
+def format_fauna_page(entity: dict) -> str:
+    """Format a fauna page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+    for field, title in [("description", "Description"), ("habitat", "Habitat"),
+                          ("comportement", "Comportement"), ("dangerosite", "Dangerosité"),
+                          ("lien_magie", "Lien à la magie"), ("rarete", "Rareté")]:
+        if entity.get(field):
+            parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(entity[field]))}")
+    return "\n".join(parts)
+
+
+def format_flora_page(entity: dict) -> str:
+    """Format a flora page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+    for field, title in [("description", "Description"), ("habitat", "Habitat"),
+                          ("proprietes", "Propriétés"), ("usages", "Usages"),
+                          ("rarete", "Rareté")]:
+        if entity.get(field):
+            parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(entity[field]))}")
+    return "\n".join(parts)
+
+
+def format_bestiary_page(entity: dict) -> str:
+    """Format a bestiary page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+    for field, title in [("description", "Description"), ("habitat", "Habitat"),
+                          ("pouvoirs", "Pouvoirs & Capacités"), ("dangerosite", "Dangerosité"),
+                          ("origine", "Origine"), ("faiblesses", "Faiblesses")]:
+        val = entity.get(field)
+        if val:
+            if isinstance(val, list):
+                items = "".join(f"<li>{_e(v)}</li>" for v in val)
+                parts.append(f"<h3>{title}</h3><ul>{items}</ul>")
+            else:
+                parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(val))}")
+    legendes = entity.get("legendes_associees", [])
+    if legendes:
+        if isinstance(legendes, list):
+            items = "".join(f"<li>{_e(l)}</li>" for l in legendes)
+            parts.append(f"<h3>Légendes associées</h3><ul>{items}</ul>")
+        else:
+            parts.append(f"<h3>Légendes associées</h3>{_markdown_to_html(str(legendes))}")
+    return "\n".join(parts)
+
+
+def format_notable_location_page(entity: dict) -> str:
+    """Format a notable location page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+
+    statut = entity.get("statut", "")
+    region = entity.get("region", "")
+    meta = []
+    if statut:
+        meta.append(f"<strong>Statut :</strong> {_e(statut)}")
+    if region:
+        meta.append(f"<strong>Région :</strong> {_e(region)}")
+    if meta:
+        parts.append(f"<p>{'<br/>'.join(meta)}</p>")
+
+    for field, title in [("description", "Description"), ("histoire", "Histoire"),
+                          ("importance", "Importance")]:
+        if entity.get(field):
+            parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(entity[field]))}")
+    return "\n".join(parts)
+
+
+def format_resource_page(entity: dict) -> str:
+    """Format a resource page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+    for field, title in [("description", "Description"), ("rarete", "Rareté"),
+                          ("proprietes", "Propriétés"), ("localisation", "Localisation"),
+                          ("usages", "Usages")]:
+        if entity.get(field):
+            parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(entity[field]))}")
+    return "\n".join(parts)
+
+
+def format_organization_page(entity: dict) -> str:
+    """Format an organization page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+    for field, title in [("description", "Description"), ("fondation", "Fondation"),
+                          ("objectifs", "Objectifs"), ("structure", "Structure"),
+                          ("influence", "Influence")]:
+        if entity.get(field):
+            parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(entity[field]))}")
+    membres = entity.get("membres_notables", [])
+    if membres:
+        if isinstance(membres, list):
+            items = "".join(f"<li>{_e(m)}</li>" for m in membres)
+            parts.append(f"<h3>Membres notables</h3><ul>{items}</ul>")
+        else:
+            parts.append(f"<h3>Membres notables</h3>{_markdown_to_html(str(membres))}")
+    return "\n".join(parts)
+
+
+def format_artifact_page(entity: dict) -> str:
+    """Format an artifact page."""
+    parts: list[str] = []
+    parts.append(f"<h2>{_e(entity.get('name', '?'))}</h2>")
+    for field, title in [("description", "Description"), ("origine", "Origine"),
+                          ("pouvoirs", "Pouvoirs & Propriétés"),
+                          ("localisation", "Localisation"), ("histoire", "Histoire")]:
+        val = entity.get(field)
+        if val:
+            if isinstance(val, list):
+                items = "".join(f"<li>{_e(v)}</li>" for v in val)
+                parts.append(f"<h3>{title}</h3><ul>{items}</ul>")
+            else:
+                parts.append(f"<h3>{title}</h3>{_markdown_to_html(str(val))}")
     return "\n".join(parts)
 
 

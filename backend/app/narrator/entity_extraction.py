@@ -379,6 +379,11 @@ async def generate_entity_sheet(
         sheet = extract_json(response)
         if not isinstance(sheet, dict):
             raise ValueError("Expected a JSON object")
+        # LLM sometimes wraps the sheet in a root key — unwrap it
+        if len(sheet) == 1:
+            only_value = next(iter(sheet.values()))
+            if isinstance(only_value, dict) and "name" in only_value:
+                sheet = only_value
         sheet["name"] = entity_name
         sheet["entity_type"] = entity_type
         return sheet

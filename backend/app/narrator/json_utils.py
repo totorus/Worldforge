@@ -267,7 +267,7 @@ def extract_json(response: str) -> any:
         pass
 
     # 2. Try extracting from ```json ... ``` blocks
-    matches = re.findall(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
+    matches = re.findall(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if matches:
         for match in reversed(matches):
             try:

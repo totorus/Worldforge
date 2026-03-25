@@ -11,6 +11,7 @@ const STATUS_LABELS = {
   simulated: "Simule",
   narrated: "Narre",
   exported: "Exporte",
+  published: "Publié",
 };
 
 const TABS = [
@@ -141,9 +142,9 @@ export default function WorldView() {
 
   const config = world?.config || {};
   const status = world?.status || "draft";
-  const canSimulate = ["configured", "simulated", "narrated", "exported"].includes(status);
-  const canNarrate = ["simulated", "narrated", "exported"].includes(status);
-  const canExport = ["narrated", "exported"].includes(status);
+  const canSimulate = ["configured", "simulated", "narrated", "exported", "published"].includes(status);
+  const canNarrate = ["simulated", "narrated", "exported", "published"].includes(status);
+  const canExport = ["narrated", "exported", "published"].includes(status);
 
   const factionCount = config.factions?.length || 0;
   const regionCount = config.geography?.regions?.length || 0;
@@ -265,7 +266,8 @@ export default function WorldView() {
             <div className={styles.links}>
               {(status === "simulated" ||
                 status === "narrated" ||
-                status === "exported") && (
+                status === "exported" ||
+                status === "published") && (
                 <Link
                   to={`/world/${worldId}/timeline`}
                   className={styles.link}
@@ -273,7 +275,7 @@ export default function WorldView() {
                   Voir la chronologie
                 </Link>
               )}
-              {(status === "narrated" || status === "exported") && (
+              {(status === "narrated" || status === "exported" || status === "published") && (
                 <Link
                   to={`/world/${worldId}/narrative`}
                   className={styles.link}

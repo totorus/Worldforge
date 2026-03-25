@@ -1,43 +1,14 @@
 import { useState } from "react";
 import styles from "../styles/Timeline.module.css";
 
-const CATEGORY_LABELS = {
-  conflict: "Conflit",
-  diplomacy: "Diplomatie",
-  catastrophe: "Catastrophe",
-  cultural: "Culturel",
-  economic: "Economique",
-  discovery: "Decouverte",
-};
-
-const CATEGORY_ICONS = {
-  conflict: "\u2694",
-  diplomacy: "\uD83E\uDD1D",
-  catastrophe: "\uD83C\uDF0B",
-  cultural: "\uD83C\uDFAD",
-  economic: "\uD83D\uDCB0",
-  discovery: "\uD83D\uDD2D",
-};
-
 export default function TimelineViewer({ timeline }) {
   const [expandedTicks, setExpandedTicks] = useState(new Set());
-  const [activeFilter, setActiveFilter] = useState(null);
 
   if (!timeline || !timeline.ticks || timeline.ticks.length === 0) {
-    return <div className={styles.empty}>Aucune donnee de chronologie disponible.</div>;
+    return <div className={styles.empty}>Aucune donnée de chronologie disponible.</div>;
   }
 
   const ticks = timeline.ticks;
-
-  // Gather all event categories
-  const allCategories = new Set();
-  ticks.forEach((tick) => {
-    (tick.events || []).forEach((ev) => {
-      if (ev.type || ev.category) {
-        allCategories.add(ev.type || ev.category);
-      }
-    });
-  });
 
   // Stats
   const totalEvents = ticks.reduce(
@@ -62,15 +33,14 @@ export default function TimelineViewer({ timeline }) {
     });
   };
 
-  const filteredTicks = ticks.map((tick) => {
-    if (!activeFilter) return tick;
-    return {
-      ...tick,
-      events: (tick.events || []).filter(
-        (ev) => (ev.type || ev.category) === activeFilter
-      ),
-    };
-  });
+  // Human-readable name from IDs: "evt_marée_de_souvenirs" → "Marée de souvenirs"
+  const formatEventId = (id) => {
+    if (!id) return "Événement";
+    return id
+      .replace(/^(evt|fac|tech|role|reg)_/, "")
+      .replace(/_/g, " ")
+      .replace(/^\w/, (c) => c.toUpperCase());
+  };
 
   return (
     <>
@@ -78,11 +48,11 @@ export default function TimelineViewer({ timeline }) {
       <div className={styles.stats}>
         <div className={styles.stat}>
           <div className={styles.statValue}>{ticks.length}</div>
-          <div className={styles.statLabel}>Periodes</div>
+          <div className={styles.statLabel}>Périodes</div>
         </div>
         <div className={styles.stat}>
           <div className={styles.statValue}>{totalEvents}</div>
-          <div className={styles.statLabel}>Evenements</div>
+          <div className={styles.statLabel}>Événements</div>
         </div>
         <div className={styles.stat}>
           <div className={styles.statValue}>{totalTechs}</div>
@@ -94,46 +64,18 @@ export default function TimelineViewer({ timeline }) {
         </div>
       </div>
 
-      {/* Filters */}
-      {allCategories.size > 0 && (
-        <div className={styles.filters}>
-          <button
-            className={`${styles.filterBtn} ${
-              !activeFilter ? styles.active : ""
-            }`}
-            onClick={() => setActiveFilter(null)}
-          >
-            Tous
-          </button>
-          {[...allCategories].map((cat) => (
-            <button
-              key={cat}
-              className={`${styles.filterBtn} ${
-                activeFilter === cat ? styles.active : ""
-              }`}
-              onClick={() =>
-                setActiveFilter(activeFilter === cat ? null : cat)
-              }
-            >
-              {CATEGORY_ICONS[cat] || ""} {CATEGORY_LABELS[cat] || cat}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Timeline */}
       <div className={styles.timeline}>
-        {filteredTicks.map((tick, i) => {
+        {ticks.map((tick, i) => {
           const hasContent =
             (tick.events?.length || 0) +
               (tick.tech_unlocks?.length || 0) +
               (tick.character_events?.length || 0) >
             0;
-          if (!hasContent && activeFilter) return null;
+          if (!hasContent) return null;
 
           const expanded = expandedTicks.has(i);
-          const yearLabel =
-            tick.year ?? tick.label ?? `Periode ${i + 1}`;
+          const yearLabel = tick.year ?? `Période ${i + 1}`;
 
           return (
             <div key={i} className={styles.tick}>
@@ -159,30 +101,23 @@ export default function TimelineViewer({ timeline }) {
 
               {expanded && (
                 <div className={styles.tickDetails}>
-                  {(tick.events || []).map((ev, j) => {
-                    const cat = ev.type || ev.category || "default";
-                    return (
-                      <div
-                        key={j}
-                        className={`${styles.eventCard} ${
-                          styles[cat] || ""
-                        }`}
-                      >
-                        <div className={styles.eventType}>
-                          {CATEGORY_ICONS[cat] || ""}{" "}
-                          {CATEGORY_LABELS[cat] || cat}
-                        </div>
-                        <div className={styles.eventName}>
-                          {ev.name || ev.title || "Evenement"}
-                        </div>
-                        {(ev.description || ev.details) && (
-                          <div className={styles.eventDesc}>
-                            {ev.description || ev.details}
-                          </div>
-                        )}
+                  {(tick.events || []).map((ev, j) => (
+                    <div key={j} className={styles.eventCard}>
+                      <div className={styles.eventName}>
+                        {formatEventId(ev.event_id)}
                       </div>
-                    );
-                  })}
+                      {ev.involved_factions?.length > 0 && (
+                        <div className={styles.eventDesc}>
+                          Factions : {ev.involved_factions.join(", ")}
+                        </div>
+                      )}
+                      {ev.involved_regions?.length > 0 && (
+                        <div className={styles.eventDesc}>
+                          Régions : {ev.involved_regions.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
 
                   {(tick.tech_unlocks || []).map((tech, j) => (
                     <div key={`tech-${j}`} className={styles.techUnlock}>
@@ -190,7 +125,12 @@ export default function TimelineViewer({ timeline }) {
                       <span>
                         {typeof tech === "string"
                           ? tech
-                          : tech.name || tech.label || "Technologie"}
+                          : formatEventId(tech.tech_id || tech.name || "Technologie")}
+                        {tech.faction_id && (
+                          <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>
+                            ({formatEventId(tech.faction_id)})
+                          </span>
+                        )}
                       </span>
                     </div>
                   ))}
@@ -201,9 +141,14 @@ export default function TimelineViewer({ timeline }) {
                       <span>
                         {typeof ce === "string"
                           ? ce
-                          : `${ce.character || ce.name || "Personnage"}: ${
-                              ce.event || ce.action || ""
+                          : `${formatEventId(ce.role || "Personnage")} — ${
+                              ce.type === "spawn" ? "apparition" : ce.type === "retire" ? "retrait" : ce.type || ""
                             }`}
+                        {ce.faction_id && (
+                          <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>
+                            ({formatEventId(ce.faction_id)})
+                          </span>
+                        )}
                       </span>
                     </div>
                   ))}

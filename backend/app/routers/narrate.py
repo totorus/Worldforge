@@ -33,7 +33,8 @@ _STEP_LABELS = {
     4: "Narration des événements",
     5: "Biographies des personnages",
     6: "Légendes",
-    7: "Vérification de cohérence",
+    7: "Extraction d'entités",
+    8: "Vérification de cohérence",
 }
 
 
@@ -88,11 +89,11 @@ async def _run_narration_background(task_id: str, world_id: str, config: dict, t
         from app.narrator.pipeline import (
             _run_era_splitting, _run_naming, _run_faction_sheets,
             _run_region_sheets, _run_event_narratives, _run_character_bios,
-            _run_legends, _run_coherence_check,
+            _run_legends, _run_entity_extraction, run_coherence_with_fix,
         )
 
         narrative_blocks: dict = {}
-        total_steps = 8
+        total_steps = 9
 
         step_runners = [
             ("eras", lambda: _run_era_splitting(config, timeline)),
@@ -102,7 +103,8 @@ async def _run_narration_background(task_id: str, world_id: str, config: dict, t
             ("events", lambda: _run_event_narratives(config, timeline, narrative_blocks)),
             ("characters", lambda: _run_character_bios(config, timeline, narrative_blocks)),
             ("legends", lambda: _run_legends(config, narrative_blocks)),
-            ("coherence_report", lambda: _run_coherence_check(config, narrative_blocks)),
+            ("entity_summary", lambda: _run_entity_extraction(config, narrative_blocks)),
+            ("coherence_report", lambda: run_coherence_with_fix(config, narrative_blocks)),
         ]
 
         for i, (key, runner) in enumerate(step_runners):

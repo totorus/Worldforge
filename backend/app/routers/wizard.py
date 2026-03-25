@@ -598,12 +598,26 @@ def _auto_repair_config(config: dict) -> dict:
                         conn_map.setdefault(target, set()).add(region["id"])
                         break
 
+    # --- 1b. Fix resource IDs that don't match ^res_ pattern ---
+    for res in config.get("resources", []):
+        if isinstance(res, dict) and "id" in res:
+            if not res["id"].startswith("res_"):
+                res["id"] = "res_" + res["id"].lstrip("reg_").lstrip("_")
+
     # --- 2. Ensure all referenced resources exist ---
     resource_ids = _safe_ids(config.get("resources", []))
     for region in regions:
         res = region.get("resources", [])
         if isinstance(res, list):
-            region["resources"] = [r for r in res if (r if isinstance(r, str) else "") in resource_ids]
+            # Fix resource refs that use wrong prefix
+            fixed = []
+            for r in res:
+                if isinstance(r, str):
+                    if r in resource_ids:
+                        fixed.append(r)
+                    elif "res_" + r.lstrip("reg_").lstrip("_") in resource_ids:
+                        fixed.append("res_" + r.lstrip("reg_").lstrip("_"))
+            region["resources"] = fixed
         else:
             region["resources"] = []
 
@@ -648,11 +662,16 @@ def _auto_repair_config(config: dict) -> dict:
         if isinstance(fs, dict) and fs.get("faction_id") in faction_ids
     ]
 
-    # --- 6. Ensure relations reference existing factions ---
-    initial_state["initial_relations"] = [
-        r for r in initial_state.get("initial_relations", [])
-        if isinstance(r, dict) and r.get("faction_a") in faction_ids and r.get("faction_b") in faction_ids
-    ]
+    # --- 6. Ensure relations reference existing factions & strip extra props ---
+    allowed_relation_keys = {"faction_a", "faction_b", "type", "intensity"}
+    cleaned_relations = []
+    for r in initial_state.get("initial_relations", []):
+        if isinstance(r, dict) and r.get("faction_a") in faction_ids and r.get("faction_b") in faction_ids:
+            cleaned = {k: v for k, v in r.items() if k in allowed_relation_keys}
+            cleaned.setdefault("type", "neutral")
+            cleaned.setdefault("intensity", 0.5)
+            cleaned_relations.append(cleaned)
+    initial_state["initial_relations"] = cleaned_relations
 
     # --- 7. Remove cascades from non-black-swan events & validate cascade refs ---
     all_event_ids = {e.get("id", "") for e in config["event_pool"] if isinstance(e, dict)}
@@ -691,6 +710,19 @@ def _auto_repair_config(config: dict) -> dict:
     meta.setdefault("trope_subversion", 0.5)
     if meta.get("tick_duration_years") not in (1, 5, 10):
         meta["tick_duration_years"] = 5
+    # Clamp simulation_years to minimum 1
+    if isinstance(meta.get("simulation_years"), (int, float)) and meta["simulation_years"] < 1:
+        meta["simulation_years"] = max(1, int(meta["simulation_years"]))
+
+    # --- 10. Clamp integer fields that require minimum 1 ---
+    for faction in config.get("factions", []):
+        if isinstance(faction, dict):
+            if isinstance(faction.get("avg_lifespan"), (int, float)) and faction["avg_lifespan"] < 1:
+                faction["avg_lifespan"] = 80
+    for fs in initial_state.get("faction_states", []):
+        if isinstance(fs, dict):
+            if isinstance(fs.get("starting_population"), (int, float)) and fs["starting_population"] < 1:
+                fs["starting_population"] = 10000
 
     return config
 

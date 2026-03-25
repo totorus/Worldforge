@@ -162,6 +162,15 @@ class BookstackClient:
             {"book_id": book_id, "name": name, "description": description},
         )
 
+    async def update_chapter(
+        self, chapter_id: int, *, description: str | None = None
+    ) -> dict[str, Any]:
+        """PUT /api/chapters/{id}"""
+        payload: dict[str, Any] = {}
+        if description is not None:
+            payload["description"] = description
+        return await self._put(f"/chapters/{chapter_id}", payload)
+
     # ------------------------------------------------------------------
     # Pages
     # ------------------------------------------------------------------

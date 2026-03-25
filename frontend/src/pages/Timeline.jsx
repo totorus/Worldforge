@@ -14,7 +14,7 @@ export default function Timeline() {
     worlds
       .getTimeline(worldId)
       .then((data) => {
-        setTimeline(data);
+        setTimeline(data.timeline);
         setLoading(false);
       })
       .catch((err) => {

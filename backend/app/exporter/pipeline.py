@@ -6,9 +6,18 @@ Structure:
           ├── Chapter "Atlas"         → one page per region
           ├── Chapter "Chroniques"    → one page per era
           ├── Chapter "Factions"      → one page per faction
+          ├── Chapter "Races & Peuples" → one page per race
+          ├── Chapter "Cosmogonies"   → one page per cosmogony
           ├── Chapter "Personnages"   → one page per character
           ├── Chapter "Technologies & Pouvoirs" → one page per tech
           ├── Chapter "Légendes"      → one page per legend
+          ├── Chapter "Faune"         → one page per fauna entity
+          ├── Chapter "Flore"         → one page per flora entity
+          ├── Chapter "Bestiaire"     → one page per bestiary entity
+          ├── Chapter "Lieux notables" → one page per notable location
+          ├── Chapter "Ressources"    → one page per resource
+          ├── Chapter "Organisations" → one page per organization
+          ├── Chapter "Artefacts"     → one page per artifact
           └── Chapter "Annexes"       → config + stats + coherence
 """
 
@@ -28,6 +37,15 @@ from app.exporter.formatters import (
     format_region_page,
     format_stats_page,
     format_tech_page,
+    format_race_page,
+    format_cosmogony_page,
+    format_fauna_page,
+    format_flora_page,
+    format_bestiary_page,
+    format_notable_location_page,
+    format_resource_page,
+    format_organization_page,
+    format_artifact_page,
 )
 
 logger = logging.getLogger("worldforge.exporter")
@@ -87,6 +105,87 @@ def _group_events_by_era(
                 era_events[era_key].append(ev)
                 break
     return era_events
+
+
+def _match_narrative_events_to_eras(
+    events: list[dict], eras: list[dict]
+) -> dict[str, list[dict]]:
+    """Assign narrative events to eras using cascading matching.
+    Cascade: exact name → substring inclusion → year range → orphans.
+    """
+    result: dict[str, list[dict]] = {era.get("name", ""): [] for era in eras}
+    result["__orphans__"] = []
+
+    for ev in events:
+        era_field = ev.get("era", "")
+        matched = False
+
+        # 1. Exact match
+        if era_field in result and era_field != "__orphans__":
+            result[era_field].append(ev)
+            continue
+
+        # 2. Substring inclusion (case-insensitive)
+        era_lower = era_field.lower()
+        for era in eras:
+            era_name = era.get("name", "")
+            if era_name.lower() in era_lower or era_lower in era_name.lower():
+                result[era_name].append(ev)
+                matched = True
+                break
+
+        if matched:
+            continue
+
+        # 3. Year-range fallback
+        year = ev.get("year")
+        if year is not None:
+            for era in eras:
+                start = era.get("start_year", 0)
+                end = era.get("end_year", float("inf"))
+                if start <= year <= end:
+                    result[era.get("name", "")].append(ev)
+                    matched = True
+                    break
+
+        if not matched:
+            result["__orphans__"].append(ev)
+
+    return result
+
+
+def _collect_unlocked_techs(
+    timeline: dict, tech_tree_nodes: dict[str, dict]
+) -> list[dict]:
+    """Collect techs unlocked by any faction across all ticks.
+    Uses the last tick's world_state for the final cumulative state.
+    """
+    ticks = timeline.get("ticks", [])
+    if not ticks:
+        return []
+
+    unlocked_ids: set[str] = set()
+    last_tick = ticks[-1]
+    factions = last_tick.get("world_state", {}).get("factions", [])
+    for fac in factions:
+        for tech_id in fac.get("unlocked_techs", []):
+            unlocked_ids.add(tech_id)
+
+    # Fallback: scan all ticks if last tick had nothing
+    if not unlocked_ids:
+        for tick in ticks:
+            for fac in tick.get("world_state", {}).get("factions", []):
+                for tech_id in fac.get("unlocked_techs", []):
+                    unlocked_ids.add(tech_id)
+
+    result = []
+    for tech_id in sorted(unlocked_ids):
+        node = tech_tree_nodes.get(tech_id)
+        if node:
+            result.append(node)
+        else:
+            result.append({"id": tech_id, "name": tech_id})
+    return result
 
 
 def _inject_cross_references(html: str, xref_map: dict[str, str]) -> str:
@@ -161,15 +260,24 @@ async def export_to_bookstack(
     await client.attach_book_to_shelf(shelf["id"], existing_book_ids + [book_id])
 
     # ------------------------------------------------------------------
-    # 3. Create the 7 chapters
+    # 3. Create chapters
     # ------------------------------------------------------------------
     chapter_defs = [
         ("atlas", "Atlas", "Géographie du monde"),
         ("chroniques", "Chroniques", "Histoire par ères"),
         ("factions", "Factions", "Peuples et organisations"),
+        ("races", "Races & Peuples", "Races et peuples du monde"),
+        ("cosmogonies", "Cosmogonies", "Mythes de création"),
         ("personnages", "Personnages", "Personnages notables"),
         ("tech", "Technologies & Pouvoirs", "Arbre technologique et pouvoirs"),
         ("legendes", "Légendes", "Mythes et légendes"),
+        ("faune", "Faune", "Animaux notables du monde"),
+        ("flore", "Flore", "Plantes notables du monde"),
+        ("bestiaire", "Bestiaire", "Créatures magiques et êtres uniques"),
+        ("lieux", "Lieux notables", "Lieux remarquables du monde"),
+        ("ressources", "Ressources", "Ressources uniques du monde"),
+        ("organisations", "Organisations", "Ordres, guildes et confréries"),
+        ("artefacts", "Artefacts", "Objets légendaires et reliques"),
         ("annexes", "Annexes", "Configuration et statistiques"),
     ]
 
@@ -187,14 +295,6 @@ async def export_to_bookstack(
     narr_characters = _list_to_dict(narrative_blocks.get("characters", {}), key="name")
     narr_eras_raw = narrative_blocks.get("eras", [])
     narr_eras = _list_to_dict(narr_eras_raw, key="name") if isinstance(narr_eras_raw, list) else narr_eras_raw
-    narr_events = narrative_blocks.get("events", [])
-    if isinstance(narr_events, list):
-        narr_events_by_era: dict[str, list[dict]] = {}
-        for ev in narr_events:
-            era_name = ev.get("era", "")
-            narr_events_by_era.setdefault(era_name, []).append(ev)
-    else:
-        narr_events_by_era = {}
 
     # ------------------------------------------------------------------
     # Collect all pages (pass 1)
@@ -228,6 +328,12 @@ async def export_to_bookstack(
     else:
         eras_to_use = timeline_eras
 
+    narr_events = narrative_blocks.get("events", [])
+    if isinstance(narr_events, list):
+        narr_events_by_era = _match_narrative_events_to_eras(narr_events, eras_to_use)
+    else:
+        narr_events_by_era = {}
+
     # Group timeline events by era for enrichment
     tl_events = timeline.get("events", [])
     era_events = _group_events_by_era(eras_to_use, tl_events)
@@ -251,6 +357,16 @@ async def export_to_bookstack(
             chapter_id=chapter_ids["chroniques"], name=era_name, html=html
         )
         pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": era_name, "type": "era", "key": era_key})
+
+    # Orphan events (no era match)
+    orphan_events = narr_events_by_era.get("__orphans__", [])
+    if orphan_events:
+        orphan_era = {"name": "Événements non classés", "narrative": "Événements n'ayant pu être associés à une ère définie."}
+        html = format_era_page(orphan_era, [], orphan_events)
+        page = await client.create_page(
+            chapter_id=chapter_ids["chroniques"], name="Événements non classés", html=html
+        )
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": "Événements non classés", "type": "era", "key": "__orphans__"})
 
     # --- Factions ---
     for faction in config.get("factions", []):
@@ -278,12 +394,23 @@ async def export_to_bookstack(
         )
         pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": cname, "type": "character", "key": cname})
 
-    # --- Technologies ---
+    # --- Technologies (only unlocked) ---
     tech_narratives = narrative_blocks.get("technologies", narrative_blocks.get("tech", {}))
     if isinstance(tech_narratives, list):
         tech_narratives = _list_to_dict(tech_narratives)
 
-    for tech in config.get("tech_tree", {}).get("nodes", []):
+    # tech_tree.nodes can be a list or dict — normalize to dict
+    raw_nodes = config.get("tech_tree", {}).get("nodes", [])
+    if isinstance(raw_nodes, list):
+        tech_nodes_dict = {t["id"]: t for t in raw_nodes if isinstance(t, dict) and "id" in t}
+    elif isinstance(raw_nodes, dict):
+        tech_nodes_dict = raw_nodes
+    else:
+        tech_nodes_dict = {}
+
+    unlocked_techs = _collect_unlocked_techs(timeline, tech_nodes_dict)
+
+    for tech in unlocked_techs:
         tid = tech["id"]
         tname = tech.get("name", tid)
         narr = tech_narratives.get(tid) if isinstance(tech_narratives, dict) else None
@@ -317,6 +444,105 @@ async def export_to_bookstack(
             chapter_id=chapter_ids["legendes"], name=title, html=html
         )
         pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": title, "type": "legend", "key": title})
+
+    # --- Races ---
+    for race in narrative_blocks.get("entities_race", []):
+        if not isinstance(race, dict):
+            continue
+        rname = race.get("name", "Race inconnue")
+        html = format_race_page(race)
+        page = await client.create_page(chapter_id=chapter_ids["races"], name=rname, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": rname, "type": "race", "key": rname})
+
+    # --- Cosmogonies ---
+    for cosmo in narrative_blocks.get("entities_cosmogonie", []):
+        if not isinstance(cosmo, dict):
+            continue
+        cname = cosmo.get("name", "Cosmogonie inconnue")
+        html = format_cosmogony_page(cosmo)
+        page = await client.create_page(chapter_id=chapter_ids["cosmogonies"], name=cname, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": cname, "type": "cosmogony", "key": cname})
+
+    # --- Faune ---
+    for entity in narrative_blocks.get("entities_faune", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_fauna_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["faune"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "fauna", "key": ename})
+
+    # --- Flore ---
+    for entity in narrative_blocks.get("entities_flore", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_flora_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["flore"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "flora", "key": ename})
+
+    # --- Bestiaire ---
+    for entity in narrative_blocks.get("entities_bestiaire", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_bestiary_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["bestiaire"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "bestiary", "key": ename})
+
+    # --- Lieux notables ---
+    for entity in narrative_blocks.get("entities_lieu_notable", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_notable_location_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["lieux"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "location", "key": ename})
+
+    # --- Ressources ---
+    for entity in narrative_blocks.get("entities_ressource", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_resource_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["ressources"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "resource", "key": ename})
+
+    # --- Organisations ---
+    for entity in narrative_blocks.get("entities_organisation", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_organization_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["organisations"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "organization", "key": ename})
+
+    # --- Artefacts ---
+    for entity in narrative_blocks.get("entities_artefact", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_artifact_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["artefacts"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "artifact", "key": ename})
+
+    # --- Personnages historiques (from entity extraction, separate from character_bios) ---
+    for entity in narrative_blocks.get("entities_personnage_historique", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", "?")
+        html = format_character_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["personnages"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "character", "key": f"entity_{ename}"})
+
+    # --- Légendes (from entity extraction) ---
+    for entity in narrative_blocks.get("entities_legende", []):
+        if not isinstance(entity, dict):
+            continue
+        ename = entity.get("name", entity.get("title", "Légende"))
+        html = format_legend_page(entity)
+        page = await client.create_page(chapter_id=chapter_ids["legendes"], name=ename, html=html)
+        pages_created.append({"id": page["id"], "slug": page.get("slug", ""), "name": ename, "type": "legend", "key": f"entity_{ename}"})
 
     # --- Annexes ---
     stats_html = format_stats_page(config, timeline)
@@ -374,6 +600,32 @@ async def export_to_bookstack(
         if updated_html != original_html:
             await client.update_page(p["id"], html=updated_html)
             logger.debug("  Updated cross-refs for page '%s'", p["name"])
+
+    # ------------------------------------------------------------------
+    # Pass 3: update chapter descriptions with page counts
+    # ------------------------------------------------------------------
+    type_to_chapter = {
+        "region": "atlas", "era": "chroniques", "faction": "factions",
+        "race": "races", "cosmogony": "cosmogonies", "character": "personnages",
+        "tech": "tech", "legend": "legendes", "fauna": "faune",
+        "flora": "flore", "bestiary": "bestiaire", "location": "lieux",
+        "resource": "ressources", "organization": "organisations",
+        "artifact": "artefacts", "annex": "annexes",
+    }
+    chapter_page_counts: dict[int, int] = {}
+    for p in pages_created:
+        ch_key = type_to_chapter.get(p.get("type", ""))
+        if ch_key and ch_key in chapter_ids:
+            ch_id = chapter_ids[ch_key]
+            chapter_page_counts[ch_id] = chapter_page_counts.get(ch_id, 0) + 1
+
+    for key, name, desc in chapter_defs:
+        ch_id = chapter_ids[key]
+        count = chapter_page_counts.get(ch_id, 0)
+        new_desc = f"{desc} — {count} fiche{'s' if count != 1 else ''}"
+        await client.update_chapter(ch_id, description=new_desc)
+
+    logger.info("Updated chapter descriptions with page counts")
 
     # ------------------------------------------------------------------
     # Build mapping

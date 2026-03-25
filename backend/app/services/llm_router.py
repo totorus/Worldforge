@@ -20,6 +20,24 @@ TASK_ROUTING = {
     "naming": "mistral_small",
     "summary": "mistral_small",
     "tech_description": "mistral_small",
+
+    # Entity extraction (Kimi K2.5)
+    "entity_detection": "kimi",
+
+    # Entity sheet generation (Mistral Creative)
+    "entity_sheet": "mistral_creative",
+    "cosmogony": "mistral_creative",
+    "race_sheet": "mistral_creative",
+    "fauna_sheet": "mistral_creative",
+    "flora_sheet": "mistral_creative",
+    "bestiary_sheet": "mistral_creative",
+    "location_sheet": "mistral_creative",
+    "resource_sheet": "mistral_creative",
+    "organization_sheet": "mistral_creative",
+    "artifact_sheet": "mistral_creative",
+
+    # Coherence fix (Mistral Creative — rewrites narrative blocks)
+    "coherence_fix": "mistral_creative",
 }
 
 

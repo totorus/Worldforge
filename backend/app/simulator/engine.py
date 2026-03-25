@@ -12,6 +12,7 @@ from app.simulator.factions import update_factions
 from app.simulator.tech import process_tech_unlocks
 from app.simulator.events import process_events
 from app.simulator.characters import process_characters
+from app.simulator.validator import validate_timeline
 
 
 def run_simulation(config: dict, start_state: dict | None = None) -> dict:
@@ -41,12 +42,18 @@ def run_simulation(config: dict, start_state: dict | None = None) -> dict:
         tick_result = _run_tick(state, rng)
         ticks.append(tick_result.to_dict())
 
-    return {
+    result = {
         "world_id": world_id,
         "config_hash": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
         "seed": seed,
         "ticks": ticks,
     }
+
+    validation_errors = validate_timeline(result, config)
+    if validation_errors:
+        result["validation_errors"] = validation_errors
+
+    return result
 
 
 def _run_tick(state: WorldState, rng: random.Random) -> TickResult:
