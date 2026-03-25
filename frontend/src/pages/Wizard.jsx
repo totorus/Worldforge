@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { wizard } from "../services/api";
+import { wsService } from "../services/websocket";
 import WizardChat from "../components/WizardChat";
 import styles from "../styles/Wizard.module.css";
 
@@ -17,15 +18,24 @@ export default function Wizard() {
 
   const [messages, setMessages] = useState([]);
   const [step, setStep] = useState(1);
+  const [mode, setMode] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [worldId, setWorldId] = useState(null);
   const [error, setError] = useState(null);
   const [initializing, setInitializing] = useState(true);
 
-  // Generation overlay state
+  // Generation overlay state (guided mode)
   const [generating, setGenerating] = useState(false);
   const [genStep, setGenStep] = useState(0);
   const [genError, setGenError] = useState(null);
+
+  // Surprise mode state
+  const [surpriseGenerating, setSurpriseGenerating] = useState(false);
+  const [surpriseComplete, setSurpriseComplete] = useState(false);
+  const [surpriseWorldId, setSurpriseWorldId] = useState(null);
+
+  // Track if we already triggered generate for this session
+  const generateTriggered = useRef(false);
 
   // Start new session if no sessionId
   useEffect(() => {
@@ -51,13 +61,58 @@ export default function Wizard() {
       .then((data) => {
         setMessages(data.messages || []);
         setStep(data.step || 1);
+        setMode(data.mode || null);
         setWorldId(data.world_id || null);
         setInitializing(false);
+
+        // Restore surprise mode state from history
+        if (data.mode === "surprise") {
+          if (data.generation_status === "completed") {
+            setSurpriseComplete(true);
+            setSurpriseWorldId(data.world_id);
+          } else if (data.generation_status === "running") {
+            setSurpriseGenerating(true);
+          } else if (data.generation_status === "failed") {
+            // Show retry state
+            setSurpriseGenerating(false);
+          }
+        }
       })
       .catch((err) => {
         setError(err.message);
         setInitializing(false);
       });
+  }, [sessionId]);
+
+  // WebSocket listeners for surprise mode
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const unsubs = [
+      wsService.on("wizard_progress", (data) => {
+        if (data.session_id !== sessionId) return;
+        setMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        if (data.step) setStep(data.step);
+      }),
+      wsService.on("wizard_complete", (data) => {
+        if (data.session_id !== sessionId) return;
+        setSurpriseGenerating(false);
+        setSurpriseComplete(true);
+        setSurpriseWorldId(data.world_id);
+        setStep(4);
+        // The final message is already in the history — reload to get it
+        wizard.getHistory(sessionId).then((hist) => {
+          setMessages(hist.messages || []);
+        });
+      }),
+      wsService.on("wizard_error", (data) => {
+        if (data.session_id !== sessionId) return;
+        setSurpriseGenerating(false);
+        setError("La création a rencontré un problème. Tu peux réessayer.");
+      }),
+    ];
+
+    return () => unsubs.forEach((unsub) => unsub());
   }, [sessionId]);
 
   const handleSend = useCallback(
@@ -76,14 +131,46 @@ export default function Wizard() {
           { role: "assistant", content: data.message },
         ]);
         if (data.step) setStep(data.step);
+
+        // Update mode from response
+        if (data.mode && data.mode !== mode) {
+          setMode(data.mode);
+        }
+
+        // Auto-trigger generation in surprise mode when step 3 is reached
+        if (data.mode === "surprise" && data.step >= 3 && !generateTriggered.current) {
+          generateTriggered.current = true;
+          setSurpriseGenerating(true);
+          try {
+            await wizard.generate(sessionId);
+          } catch (genErr) {
+            setSurpriseGenerating(false);
+            setError(genErr.message);
+            generateTriggered.current = false;
+          }
+        }
       } catch (err) {
         setError(err.message);
       } finally {
         setIsLoading(false);
       }
     },
-    [sessionId, isLoading]
+    [sessionId, isLoading, mode]
   );
+
+  const handleRetryGeneration = useCallback(async () => {
+    if (!sessionId) return;
+    setError(null);
+    setSurpriseGenerating(true);
+    generateTriggered.current = true;
+    try {
+      await wizard.generate(sessionId);
+    } catch (err) {
+      setSurpriseGenerating(false);
+      setError(err.message);
+      generateTriggered.current = false;
+    }
+  }, [sessionId]);
 
   const handleCreateWorld = useCallback(async () => {
     if (!sessionId) return;
@@ -92,11 +179,9 @@ export default function Wizard() {
     setGenError(null);
 
     try {
-      // Step 1: Finalize — ask Kimi to generate the JSON
       setGenStep(1);
       await wizard.finalize(sessionId);
 
-      // Step 2: Validate — check the JSON and save to world
       setGenStep(2);
       const data = await wizard.validate(sessionId);
 
@@ -108,7 +193,6 @@ export default function Wizard() {
         return;
       }
 
-      // Step 3: Done!
       setGenStep(3);
       setTimeout(() => {
         navigate(`/world/${data.world_id}`);
@@ -128,9 +212,12 @@ export default function Wizard() {
     );
   }
 
+  // Determine if input should be disabled
+  const inputDisabled = isLoading || surpriseGenerating || surpriseComplete;
+
   return (
     <div className={styles.container}>
-      {/* Generation overlay */}
+      {/* Generation overlay (guided mode only) */}
       {generating && (
         <div className={styles.genOverlay}>
           <div className={styles.genCard}>
@@ -185,13 +272,24 @@ export default function Wizard() {
       <WizardChat
         messages={messages}
         onSend={handleSend}
-        isLoading={isLoading}
+        isLoading={isLoading || surpriseGenerating}
         step={step}
+        mode={mode}
       />
 
-      {error && <div className={styles.error}>{error}</div>}
+      {error && (
+        <div className={styles.error}>
+          {error}
+          {mode === "surprise" && !surpriseGenerating && !surpriseComplete && (
+            <button className={styles.retryBtn} onClick={handleRetryGeneration}>
+              Réessayer
+            </button>
+          )}
+        </div>
+      )}
 
-      {step >= 8 && !generating && (
+      {/* Guided mode: Create button */}
+      {mode !== "surprise" && step >= 8 && !generating && (
         <div className={styles.actions}>
           <button
             className={styles.createBtn}
@@ -203,6 +301,18 @@ export default function Wizard() {
           <span className={styles.actionsHint}>
             Tu peux aussi continuer la conversation
           </span>
+        </div>
+      )}
+
+      {/* Surprise mode: Discover button */}
+      {surpriseComplete && surpriseWorldId && (
+        <div className={styles.actions}>
+          <button
+            className={styles.createBtn}
+            onClick={() => navigate(`/world/${surpriseWorldId}`)}
+          >
+            Découvrir le monde
+          </button>
         </div>
       )}
     </div>

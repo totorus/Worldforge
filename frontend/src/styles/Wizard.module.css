@@ -465,3 +465,18 @@
   padding: 24px;
   color: var(--danger);
 }
+
+.retryBtn {
+  margin-left: 1rem;
+  padding: 0.4rem 1rem;
+  background: var(--accent, #6366f1);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.retryBtn:hover {
+  opacity: 0.9;
+}
