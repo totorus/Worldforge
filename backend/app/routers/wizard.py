@@ -28,6 +28,7 @@ class WizardResponse(BaseModel):
     message: str
     step: int | None = None
     status: str = "active"
+    mode: str | None = None
 
 
 # --- Endpoints ---
@@ -56,9 +57,11 @@ async def start_wizard(
 
     # Get initial greeting from LLM
     greeting = await kimi_client.chat_completion(
-        [system_msg, {"role": "user", "content": "Commence le wizard. Demande-moi quel genre de monde je veux créer."}],
+        [system_msg, {"role": "user", "content": "Commence la conversation."}],
         temperature=0.7,
     )
+
+    greeting = _strip_markers(greeting)
 
     # Persist greeting — must replace the list to trigger JSONB change detection
     session.messages = [*session.messages, {"role": "assistant", "content": greeting}]
@@ -92,15 +95,25 @@ async def send_message(
     session.messages = new_messages
     flag_modified(session, "messages")
 
-    # Try to detect step progression
-    session.current_step = _detect_step(response, session.current_step)
+    # Try to detect step progression and mode
+    new_step, new_mode = _detect_step(response, session.current_step, session.mode)
+    session.current_step = new_step
+    if new_mode:
+        session.mode = new_mode
+
+    # Strip markers from the response stored in messages
+    clean_response = _strip_markers(response)
+    new_messages[-1] = {"role": "assistant", "content": clean_response}
+    session.messages = new_messages
 
     await db.commit()
 
     return WizardResponse(
         session_id=str(session.id),
-        message=response,
+        message=clean_response,
         step=session.current_step,
+        status="active",
+        mode=session.mode,
     )
 
 
@@ -113,12 +126,31 @@ async def get_history(
     session = await _get_session(session_id, current_user.id, db)
     # Return messages without system prompt
     visible = [m for m in session.messages if m["role"] != "system"]
+
+    # Resolve generation status
+    generation_status = None
+    if session.generation_task_id:
+        from app.services.task_manager import get_task
+        task = get_task(session.generation_task_id)
+        if task:
+            generation_status = task.status.value
+        else:
+            # Task not in memory (server restart) — deduce from world state
+            world = await db.get(World, session.world_id) if session.world_id else None
+            if world and world.status == "configured" and world.config:
+                generation_status = "completed"
+            else:
+                generation_status = "failed"
+
     return {
         "session_id": str(session.id),
         "world_id": str(session.world_id) if session.world_id else None,
         "messages": visible,
         "step": session.current_step,
         "status": session.status,
+        "mode": session.mode,
+        "generation_task_id": session.generation_task_id,
+        "generation_status": generation_status,
     }
 
 
@@ -470,18 +502,37 @@ def _auto_repair_config(config: dict) -> dict:
     return config
 
 
-def _detect_step(response: str, current_step: int) -> int:
-    """Detect wizard step from LLM response by looking for explicit step markers.
+def _detect_step(response: str, current_step: int, current_mode: str | None = None) -> tuple[int, str | None]:
+    """Detect wizard step and mode from LLM response.
 
-    Looks for patterns like 'Étape 3', 'étape 5/11', 'Etape 4' in the response.
+    Returns (step, mode) where mode is None if not detected in this message.
+    Looks for:
+    - Mode markers: [MODE:guided] or [MODE:surprise]
+    - Step markers: 'Étape N/11' (guided) or 'Étape N/4' (surprise)
     Only advances forward, never backwards.
     """
-    # Look for explicit "Étape N" or "Etape N" patterns
-    matches = re.findall(r"[ÉéEe]tape\s+(\d{1,2})(?:\s*/\s*11)?", response, re.IGNORECASE)
-    if matches:
-        # Take the highest step mentioned
-        detected = max(int(m) for m in matches)
-        if 1 <= detected <= 11 and detected >= current_step:
-            return detected
+    detected_mode = None
 
-    return current_step
+    # Detect mode marker
+    mode_match = re.search(r"\[MODE:(guided|surprise)\]", response, re.IGNORECASE)
+    if mode_match:
+        detected_mode = mode_match.group(1).lower()
+
+    # Detect step — support both /11 and /4 denominators
+    matches = re.findall(r"[ÉéEe]tape\s+(\d{1,2})(?:\s*/\s*(\d{1,2}))?", response, re.IGNORECASE)
+    detected_step = current_step
+    if matches:
+        for step_str, denom_str in matches:
+            step_val = int(step_str)
+            denom = int(denom_str) if denom_str else (4 if (current_mode == "surprise" or detected_mode == "surprise") else 11)
+            max_step = denom
+            if 1 <= step_val <= max_step and step_val >= current_step:
+                detected_step = step_val
+
+    return detected_step, detected_mode
+
+
+def _strip_markers(text: str) -> str:
+    """Remove internal markers from LLM responses before displaying."""
+    text = re.sub(r"\[MODE:\w+\]", "", text)
+    return text.strip()
