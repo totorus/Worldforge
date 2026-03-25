@@ -21,6 +21,12 @@ class WizardSession(Base):
     # Current wizard step (1-11)
     current_step: Mapped[int | None] = mapped_column(default=1)
 
+    # Wizard mode: null (not yet chosen) | "guided" | "surprise"
+    mode: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
+
+    # Background generation task ID (surprise mode)
+    generation_task_id: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
+
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     # Status: active | finalized | abandoned
 
