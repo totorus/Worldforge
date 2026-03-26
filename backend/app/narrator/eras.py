@@ -1,4 +1,4 @@
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 """Era splitting — identifies major turning points and splits the timeline into named eras."""
 
 import json
@@ -102,6 +102,7 @@ async def split_into_eras(config: dict, timeline: dict) -> list[dict]:
 
     try:
         eras = extract_json(response)
+        eras = unwrap_llm_json(eras, expect_list=True)
         if not isinstance(eras, list):
             raise ValueError("Expected a JSON list")
         # Validate structure

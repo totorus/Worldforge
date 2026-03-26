@@ -1,4 +1,4 @@
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 """Character biographies — generates rich biographies for notable characters."""
 
 import json
@@ -53,7 +53,8 @@ def _extract_characters(timeline: dict, config: dict, names: dict[str, str]) -> 
 
 
 async def generate_biographies(
-    characters: list, config: dict, names: dict[str, str] | None = None
+    characters: list, config: dict, names: dict[str, str] | None = None,
+    *, registry=None, eras: list | None = None, events: list | None = None,
 ) -> list[dict]:
     """Generate rich biographies for notable characters.
 
@@ -94,6 +95,33 @@ async def generate_biographies(
             "events_involved": char.get("events_involved", [])[:5],  # Cap events
         })
 
+    # Build chronological context from eras
+    era_context = ""
+    if eras:
+        era_lines = []
+        for era in eras:
+            if isinstance(era, dict):
+                era_lines.append(f"- {era.get('name', '?')} (an {era.get('start_year', '?')} à {era.get('end_year', '?')})")
+        if era_lines:
+            era_context = "\n\nÈres du monde (respecte strictement ces bornes temporelles) :\n" + "\n".join(era_lines)
+
+    # Build event context for character-event alignment
+    event_context = ""
+    if events:
+        evt_lines = []
+        for evt in (events or [])[:15]:
+            if isinstance(evt, dict):
+                evt_lines.append(f"- An {evt.get('year', '?')} : {evt.get('title', '?')} ({', '.join(evt.get('involved_factions', [])[:2])})")
+        if evt_lines:
+            event_context = "\n\nÉvénements narrés (les personnages doivent être cohérents avec ces événements) :\n" + "\n".join(evt_lines)
+
+    # Build registry context if available
+    registry_context = ""
+    if registry:
+        summary = registry.compact_summary(max_chars=300)
+        if summary:
+            registry_context = f"\n\nEntités connues :\n{summary}"
+
     messages = [
         {
             "role": "system",
@@ -102,7 +130,11 @@ async def generate_biographies(
                 "Tu écris toujours en français avec un style littéraire riche et évocateur. "
                 f"Le monde « {world_name} » est de genre « {genre} ». "
                 "Tu dois créer des biographies captivantes pour les personnages décrits. "
-                "Réponds uniquement avec un JSON valide (sans markdown, sans commentaire)."
+                "RÈGLE CRUCIALE : chaque personnage ne peut être actif QUE pendant les années "
+                "entre sa naissance (birth_year) et sa mort (death_year). "
+                "Ne décris JAMAIS un personnage participant à des événements en dehors de ces dates. "
+                f"Réponds uniquement avec un JSON valide (sans markdown, sans commentaire)."
+                f"{era_context}{event_context}{registry_context}"
             ),
         },
         {
@@ -131,6 +163,7 @@ async def generate_biographies(
 
     try:
         bios = extract_json(response)
+        bios = unwrap_llm_json(bios, expect_list=True)
         if not isinstance(bios, list):
             raise ValueError("Expected a JSON list")
         return bios

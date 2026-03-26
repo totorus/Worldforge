@@ -300,6 +300,51 @@ def extract_json(response: str) -> any:
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
+def unwrap_llm_json(data, *, expect_list: bool = False, expect_dict: bool = False):
+    """Unwrap common LLM JSON wrapping patterns.
+
+    LLMs frequently wrap their output in a root key:
+        {"legends": [...]} → [...]
+        {"faction": {name: ...}} → {name: ...}
+        [{"key": ...}] when only one item expected → {"key": ...}
+
+    Args:
+        data: Parsed JSON data.
+        expect_list: If True, try to extract a list from a dict wrapper.
+        expect_dict: If True, try to extract a dict from a dict/list wrapper.
+
+    Returns:
+        Unwrapped data.
+    """
+    if expect_list and isinstance(data, dict):
+        # {"some_key": [...]} → [...]
+        if len(data) == 1:
+            only_value = next(iter(data.values()))
+            if isinstance(only_value, list):
+                return only_value
+        # {"key1": ..., "key2": ...} but one value is a list → take the list
+        for v in data.values():
+            if isinstance(v, list) and len(v) > 0:
+                return v
+        return data
+
+    if expect_dict and isinstance(data, dict):
+        # {"some_key": {fields...}} → {fields...}
+        if len(data) == 1:
+            only_value = next(iter(data.values()))
+            if isinstance(only_value, dict):
+                return only_value
+        return data
+
+    if expect_dict and isinstance(data, list):
+        # [{fields...}] → {fields...} (single-element list)
+        if len(data) == 1 and isinstance(data[0], dict):
+            return data[0]
+        return data
+
+    return data
+
+
 def _try_repair_truncated(text: str) -> any:
     """Attempt to repair truncated JSON by closing open brackets/braces."""
     if not text:

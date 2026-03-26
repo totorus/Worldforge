@@ -1,4 +1,4 @@
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 """Legends and myths — creates legends based on the world's history."""
 
 import json
@@ -9,7 +9,7 @@ from app.services import llm_router
 logger = logging.getLogger("worldforge.narrator.legends")
 
 
-async def generate_legends(config: dict, eras: list, narrative_blocks: dict) -> list[dict]:
+async def generate_legends(config: dict, eras: list, narrative_blocks: dict, *, registry=None) -> list[dict]:
     """Create 2-3 legends/myths based on the world's history.
 
     Args:
@@ -38,6 +38,16 @@ async def generate_legends(config: dict, eras: list, narrative_blocks: dict) -> 
             "narrative": evt.get("narrative", "")[:200],
         })
 
+    # Build registry context if available
+    registry_context = ""
+    if registry:
+        summary = registry.compact_summary(max_chars=400)
+        if summary:
+            registry_context = (
+                f"\n\nEntités connues du monde (base tes légendes sur ces noms et factions — "
+                f"tu peux mythifier et transformer, mais reste ancré dans le lore existant) :\n{summary}"
+            )
+
     messages = [
         {
             "role": "system",
@@ -47,7 +57,7 @@ async def generate_legends(config: dict, eras: list, narrative_blocks: dict) -> 
                 f"Le monde « {world_name} » est de genre « {genre} ». "
                 "Tu dois créer des légendes qui s'inspirent de l'histoire réelle du monde "
                 "mais la transforment en récits mythifiés. "
-                "Réponds uniquement avec un JSON valide (sans markdown, sans commentaire)."
+                f"Réponds uniquement avec un JSON valide (sans markdown, sans commentaire).{registry_context}"
             ),
         },
         {
@@ -83,8 +93,22 @@ async def generate_legends(config: dict, eras: list, narrative_blocks: dict) -> 
 
     try:
         legends = extract_json(response)
+        legends = unwrap_llm_json(legends, expect_list=True)
         if not isinstance(legends, list):
             raise ValueError("Expected a JSON list")
+        # Filter out non-dict items (LLM sometimes returns raw strings)
+        legends = [l for l in legends if isinstance(l, dict)]
+        if not legends:
+            raise ValueError("No valid legend dicts found")
+        # Normalize: LLM sometimes returns dicts instead of strings for faction/character refs
+        for legend in legends:
+            for field in ("related_factions", "related_characters"):
+                items = legend.get(field, [])
+                if isinstance(items, list):
+                    legend[field] = [
+                        item.get("name", str(item)) if isinstance(item, dict) else str(item)
+                        for item in items
+                    ]
         return legends
     except (json.JSONDecodeError, ValueError) as e:
         logger.error("Failed to parse legends JSON: %s", e)

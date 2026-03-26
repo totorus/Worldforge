@@ -1,4 +1,4 @@
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 """Faction and region sheets — generates rich narrative descriptions."""
 
 import json
@@ -7,6 +7,24 @@ import logging
 from app.services import llm_router
 
 logger = logging.getLogger("worldforge.narrator.sheets")
+
+
+def _normalize_string_list(items: list) -> list[str]:
+    """Convert a list that may contain dicts to a list of strings."""
+    result = []
+    for item in items:
+        if isinstance(item, dict):
+            # Try common name fields, then stringify
+            name = item.get("name", item.get("title", item.get("description", "")))
+            if isinstance(name, str) and name:
+                result.append(name)
+            else:
+                result.append(str(item))
+        elif isinstance(item, str):
+            result.append(item)
+        else:
+            result.append(str(item))
+    return result
 
 
 async def generate_faction_sheet(faction_config: dict, faction_history: list) -> dict:
@@ -72,10 +90,19 @@ async def generate_faction_sheet(faction_config: dict, faction_history: list) ->
 
     try:
         sheet = extract_json(response)
+        sheet = unwrap_llm_json(sheet, expect_dict=True)
+        # Extra fallback: if still a list, take first dict
+        if isinstance(sheet, list):
+            dicts = [x for x in sheet if isinstance(x, dict)]
+            sheet = dicts[0] if dicts else sheet
         if not isinstance(sheet, dict):
             raise ValueError("Expected a JSON object")
         sheet["id"] = faction_id
         sheet["name"] = faction_name
+        # Normalize list fields that LLM sometimes returns as dicts
+        for field in ("strengths", "weaknesses", "notable_moments"):
+            if isinstance(sheet.get(field), list):
+                sheet[field] = _normalize_string_list(sheet[field])
         return sheet
     except (json.JSONDecodeError, ValueError) as e:
         logger.error("Failed to parse faction sheet JSON for '%s': %s", faction_name, e)
@@ -152,10 +179,18 @@ async def generate_region_sheet(region_config: dict, region_history: list) -> di
 
     try:
         sheet = extract_json(response)
+        sheet = unwrap_llm_json(sheet, expect_dict=True)
+        if isinstance(sheet, list):
+            dicts = [x for x in sheet if isinstance(x, dict)]
+            sheet = dicts[0] if dicts else sheet
         if not isinstance(sheet, dict):
             raise ValueError("Expected a JSON object")
         sheet["id"] = region_id
         sheet["name"] = region_name
+        # Normalize list fields that LLM sometimes returns as dicts
+        for field in ("notable_events",):
+            if isinstance(sheet.get(field), list):
+                sheet[field] = _normalize_string_list(sheet[field])
         return sheet
     except (json.JSONDecodeError, ValueError) as e:
         logger.error("Failed to parse region sheet JSON for '%s': %s", region_name, e)

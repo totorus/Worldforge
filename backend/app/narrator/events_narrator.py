@@ -1,4 +1,4 @@
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 """Event narratives — generates narrative descriptions for significant events."""
 
 import json
@@ -45,7 +45,7 @@ def _select_significant_events(events: list, max_per_era: int = 10) -> list:
     return [evt for _, evt in scored[:max_per_era]]
 
 
-async def narrate_events(events: list, config: dict, eras: list) -> list[dict]:
+async def narrate_events(events: list, config: dict, eras: list, *, registry=None) -> list[dict]:
     """Generate narrative descriptions for significant events, grouped by era.
 
     Args:
@@ -86,6 +86,15 @@ async def narrate_events(events: list, config: dict, eras: list) -> list[dict]:
                 "outcome": evt.get("outcome", {}),
             })
 
+        # Build registry context if available
+        registry_context = ""
+        if registry:
+            summary = registry.compact_summary(max_chars=400)
+            if summary:
+                registry_context = (
+                    f"\n\nEntités connues du monde (utilise ces noms, tu peux en introduire de nouveaux si le récit le justifie) :\n{summary}"
+                )
+
         messages = [
             {
                 "role": "system",
@@ -94,21 +103,27 @@ async def narrate_events(events: list, config: dict, eras: list) -> list[dict]:
                     "Tu écris toujours en français avec un style littéraire évocateur. "
                     f"Le monde « {world_name} » est de genre « {genre} ». "
                     "Tu dois transformer des données brutes d'événements en récits captivants. "
-                    "Réponds uniquement avec un JSON valide (sans markdown, sans commentaire)."
+                    f"Réponds uniquement avec un JSON valide (sans markdown, sans commentaire).{registry_context}"
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    f"Nous sommes dans l'ère « {era_name} » : {era.get('description', '')}\n\n"
+                    f"Nous sommes dans l'ère « {era_name} » "
+                    f"(an {era.get('start_year', '?')} à {era.get('end_year', '?')}) : "
+                    f"{era.get('description', '')}\n\n"
+                    "CONTRAINTE : tous les événements de cette ère doivent être cohérents "
+                    "avec le ton et le contexte de l'ère. Ne mentionne pas d'événements "
+                    "ou personnages d'autres ères sans justification narrative.\n\n"
                     f"Voici les événements marquants :\n{json.dumps(events_desc, ensure_ascii=False, indent=2)}\n\n"
                     "Pour chaque événement, génère :\n"
-                    "- year : année\n"
+                    "- year : année (DOIT être entre "
+                    f"{era.get('start_year', '?')} et {era.get('end_year', '?')})\n"
                     "- event_id : identifiant original\n"
                     "- era : nom de l'ère\n"
                     "- title : titre dramatique de l'événement (en français)\n"
                     "- narrative : récit de l'événement (3-5 phrases, style littéraire)\n"
-                    "- involved_factions : factions impliquées\n"
+                    "- involved_factions : noms des factions impliquées (STRINGS, pas d'objets)\n"
                     "- consequences_narrative : conséquences narratives (1-2 phrases)\n\n"
                     "Réponds avec une liste JSON."
                 ),
@@ -122,7 +137,20 @@ async def narrate_events(events: list, config: dict, eras: list) -> list[dict]:
 
         try:
             era_narrated = extract_json(response)
+            era_narrated = unwrap_llm_json(era_narrated, expect_list=True)
             if isinstance(era_narrated, list):
+                # Normalize involved_factions: LLM sometimes returns dicts or comma-separated strings
+                for evt in era_narrated:
+                    if isinstance(evt, dict) and "involved_factions" in evt:
+                        evt_factions = evt["involved_factions"]
+                        if isinstance(evt_factions, str):
+                            # Split comma-separated string into list
+                            evt["involved_factions"] = [f.strip() for f in evt_factions.split(",") if f.strip()]
+                        elif isinstance(evt_factions, list):
+                            evt["involved_factions"] = [
+                                f.get("name", str(f)) if isinstance(f, dict) else str(f)
+                                for f in evt_factions
+                            ]
                 narrated_events.extend(era_narrated)
             else:
                 logger.warning("Expected list for era '%s', got %s", era_name, type(era_narrated))

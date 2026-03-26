@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,6 +20,7 @@ from app.services.task_manager import (
     update_task,
 )
 from app.narrator.pipeline import run_narration, run_partial_narration, ALL_STEPS
+from app.narrator.schemas import validate_step_output
 
 logger = logging.getLogger("worldforge.narrate")
 
@@ -79,54 +81,101 @@ class PartialNarrationRequest(BaseModel):
     steps: list[str]
 
 
+async def _save_narrative_blocks(world_id: str, narrative_blocks: dict, set_narrated: bool = False):
+    """Persist narrative_blocks to DB (intermediate or final save)."""
+    async with async_session() as db:
+        result = await db.execute(select(World).where(World.id == world_id))
+        world = result.scalar_one_or_none()
+        if not world:
+            return False
+        world.narrative_blocks = narrative_blocks
+        if set_narrated:
+            world.status = "narrated"
+        await db.commit()
+    return True
+
+
 async def _run_narration_background(task_id: str, world_id: str, config: dict, timeline: dict):
-    """Background coroutine for full narration with step-by-step progress."""
+    """Background coroutine for full narration with step-by-step progress and intermediate saves."""
     try:
         await update_task(task_id, status=TaskStatus.RUNNING, progress=5, message="Démarrage de la narration")
 
-        # We use run_narration but report progress after each step via a wrapper.
-        # Since run_narration is sequential, we run partial steps one-by-one for progress.
+        from app.narrator.pipeline import run_narration, validate_step_output
         from app.narrator.pipeline import (
             _run_era_splitting, _run_naming, _run_faction_sheets,
             _run_region_sheets, _run_event_narratives, _run_character_bios,
             _run_legends, _run_entity_extraction, run_coherence_with_fix,
         )
+        from app.narrator.registry import EntityRegistry
 
         narrative_blocks: dict = {}
+        run_report: dict = {"steps": {}, "pipeline_start": time.time()}
         total_steps = 9
+
+        # Build entity registry from config and feed it after each step
+        registry = EntityRegistry()
+        registry.load_from_config(config)
 
         step_runners = [
             ("eras", lambda: _run_era_splitting(config, timeline)),
             ("names", lambda: _run_naming(config, timeline)),
             ("factions", lambda: _run_faction_sheets(config, timeline)),
             ("regions", lambda: _run_region_sheets(config, timeline)),
-            ("events", lambda: _run_event_narratives(config, timeline, narrative_blocks)),
-            ("characters", lambda: _run_character_bios(config, timeline, narrative_blocks)),
-            ("legends", lambda: _run_legends(config, narrative_blocks)),
-            ("entity_summary", lambda: _run_entity_extraction(config, narrative_blocks)),
-            ("coherence_report", lambda: run_coherence_with_fix(config, narrative_blocks)),
+            ("events", lambda: _run_event_narratives(config, timeline, narrative_blocks, registry=registry)),
+            ("characters", lambda: _run_character_bios(config, timeline, narrative_blocks, registry=registry)),  # eras+events passed inside _run_character_bios
+            ("legends", lambda: _run_legends(config, narrative_blocks, registry=registry)),
+            ("entity_summary", lambda: _run_entity_extraction(config, narrative_blocks, timeline)),
+            ("coherence_report", lambda: run_coherence_with_fix(config, narrative_blocks, registry=registry)),
         ]
 
         for i, (key, runner) in enumerate(step_runners):
             progress = int(10 + (80 * i / total_steps))
             await update_task(task_id, progress=progress, message=f"Étape {i+1}/{total_steps} : {_STEP_LABELS.get(i, key)}")
-            narrative_blocks[key] = await runner()
 
-        await update_task(task_id, progress=95, message="Sauvegarde des résultats…")
+            step_start = time.time()
+            step_info = {"status": "running", "errors": []}
 
-        # Save to DB
-        async with async_session() as db:
-            result = await db.execute(select(World).where(World.id == world_id))
-            world = result.scalar_one_or_none()
-            if not world:
-                await update_task(task_id, status=TaskStatus.FAILED, error="Monde introuvable")
-                return
+            try:
+                result = await runner()
+                validated, v_errors = validate_step_output(key, result)
+                if v_errors:
+                    for err in v_errors:
+                        logger.warning(err)
+                    step_info["validation_warnings"] = v_errors
+                narrative_blocks[key] = validated
+                step_info["status"] = "ok"
+                item_count = len(validated) if isinstance(validated, (list, dict)) else 1
+                step_info["items_produced"] = item_count
+            except Exception as step_exc:
+                logger.error("Step '%s' failed: %s", key, step_exc)
+                narrative_blocks[key] = [] if key not in ("names", "coherence_report", "entity_summary") else {}
+                step_info["status"] = "failed"
+                step_info["errors"].append(f"{type(step_exc).__name__}: {str(step_exc)[:300]}")
 
-            world.narrative_blocks = narrative_blocks
-            world.status = "narrated"
-            await db.commit()
+            # Feed registry with step output
+            registry.ingest_step(key, narrative_blocks.get(key))
+
+            step_info["duration_s"] = round(time.time() - step_start, 1)
+            run_report["steps"][key] = step_info
+
+            # Intermediate save after each step
+            await _save_narrative_blocks(world_id, narrative_blocks)
+
+        # Finalize run report
+        run_report["total_duration_s"] = round(time.time() - run_report["pipeline_start"], 1)
+        del run_report["pipeline_start"]
+        run_report["coherence_score"] = narrative_blocks.get("coherence_report", {}).get("score", 0)
+        narrative_blocks["_run_report"] = run_report
+
+        await update_task(task_id, progress=95, message="Sauvegarde finale…")
+
+        # Final save with status change
+        if not await _save_narrative_blocks(world_id, narrative_blocks, set_narrated=True):
+            await update_task(task_id, status=TaskStatus.FAILED, error="Monde introuvable")
+            return
 
         score = narrative_blocks.get("coherence_report", {}).get("score")
+        run_report = narrative_blocks.get("_run_report", {})
         await update_task(
             task_id,
             status=TaskStatus.COMPLETED,
@@ -135,10 +184,16 @@ async def _run_narration_background(task_id: str, world_id: str, config: dict, t
             result={
                 "world_id": world_id,
                 "coherence_score": score,
+                "run_report": run_report,
             },
         )
     except Exception as exc:
         logger.exception("Narration background task failed")
+        # Try to save whatever we have so far
+        try:
+            await _save_narrative_blocks(world_id, narrative_blocks)
+        except Exception:
+            pass
         await update_task(task_id, status=TaskStatus.FAILED, progress=0, error=str(exc))
 
 
@@ -146,7 +201,8 @@ async def _run_partial_narration_background(
     task_id: str, world_id: str, config: dict, timeline: dict,
     steps: list[str], existing_blocks: dict,
 ):
-    """Background coroutine for partial narration."""
+    """Background coroutine for partial narration with intermediate saves."""
+    narrative_blocks = dict(existing_blocks or {})
     try:
         await update_task(task_id, status=TaskStatus.RUNNING, progress=10, message="Narration partielle en cours…")
 
@@ -154,17 +210,9 @@ async def _run_partial_narration_background(
 
         await update_task(task_id, progress=90, message="Sauvegarde…")
 
-        async with async_session() as db:
-            result = await db.execute(select(World).where(World.id == world_id))
-            world = result.scalar_one_or_none()
-            if not world:
-                await update_task(task_id, status=TaskStatus.FAILED, error="Monde introuvable")
-                return
-
-            world.narrative_blocks = narrative_blocks
-            if world.status == "simulated":
-                world.status = "narrated"
-            await db.commit()
+        if not await _save_narrative_blocks(world_id, narrative_blocks, set_narrated=True):
+            await update_task(task_id, status=TaskStatus.FAILED, error="Monde introuvable")
+            return
 
         await update_task(
             task_id,
@@ -175,6 +223,10 @@ async def _run_partial_narration_background(
         )
     except Exception as exc:
         logger.exception("Partial narration background task failed")
+        try:
+            await _save_narrative_blocks(world_id, narrative_blocks)
+        except Exception:
+            pass
         await update_task(task_id, status=TaskStatus.FAILED, progress=0, error=str(exc))
 
 

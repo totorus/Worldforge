@@ -3,7 +3,7 @@
 
 import json
 import logging
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 from app.services import llm_router
 
 logger = logging.getLogger("worldforge.narrator.entities")
@@ -279,6 +279,7 @@ async def detect_entities(
 
     try:
         entities = extract_json(response)
+        entities = unwrap_llm_json(entities, expect_list=True)
         if not isinstance(entities, list):
             raise ValueError("Expected a JSON list")
         # Filter out any that are already known
@@ -289,6 +290,11 @@ async def detect_entities(
             and e.get("name", "").lower() not in known_lower
             and e.get("type") in ENTITY_TYPES
         ]
+        # Cap to avoid runaway extraction (each entity = 1 LLM call)
+        MAX_ENTITIES_PER_DETECTION = 5
+        if len(filtered) > MAX_ENTITIES_PER_DETECTION:
+            logger.info("Capping entities from %d to %d", len(filtered), MAX_ENTITIES_PER_DETECTION)
+            filtered = filtered[:MAX_ENTITIES_PER_DETECTION]
         logger.info("Detected %d new entities (from %d candidates)", len(filtered), len(entities))
         return filtered
     except (json.JSONDecodeError, ValueError) as e:
@@ -352,7 +358,9 @@ async def generate_entity_sheet(
                 "Tu es un encyclopédiste et conteur spécialisé dans les mondes fictifs. "
                 "Tu écris toujours en français avec un style littéraire riche. "
                 f"Le monde « {world_name} » est de genre « {genre} ». "
-                "Tu dois créer une fiche encyclopédique détaillée et immersive. "
+                "Tu dois créer une fiche encyclopédique CONCISE mais immersive. "
+                "IMPORTANT : ta réponse doit faire MOINS de 1500 caractères au total. "
+                "Chaque champ texte doit faire 1 à 3 phrases maximum. "
                 "Réponds uniquement avec un JSON valide (sans markdown, sans commentaire)."
             ),
         },
@@ -364,26 +372,34 @@ async def generate_entity_sheet(
                 f"Contexte : {entity_context}\n\n"
                 f"Lore du monde :\n{lore_context}\n\n"
                 f"Génère un JSON avec les champs suivants : {fields}\n\n"
-                "Le contenu doit être cohérent avec le lore existant, "
-                "riche en détails narratifs, et immersif."
+                "Le contenu doit être cohérent avec le lore existant et immersif. "
+                "IMPORTANT : sois CONCIS. Chaque champ texte = 1 à 3 phrases max. "
+                "Réponse totale < 1500 caractères."
             ),
         },
     ]
 
     logger.info("Generating sheet for entity '%s' (type=%s)", entity_name, entity_type)
     response = await llm_router.complete(
-        task=llm_task, messages=messages, temperature=0.8, max_tokens=3072
+        task=llm_task, messages=messages, temperature=0.8, max_tokens=2048
     )
 
     try:
         sheet = extract_json(response)
+        sheet = unwrap_llm_json(sheet, expect_dict=True)
+        # If still a list, take first dict element
+        if isinstance(sheet, list):
+            dicts = [x for x in sheet if isinstance(x, dict)]
+            if dicts:
+                sheet = dicts[0]
+            else:
+                raise ValueError("Expected a JSON object, got list with no dicts")
         if not isinstance(sheet, dict):
-            raise ValueError("Expected a JSON object")
-        # LLM sometimes wraps the sheet in a root key — unwrap it
-        if len(sheet) == 1:
-            only_value = next(iter(sheet.values()))
-            if isinstance(only_value, dict) and "name" in only_value:
-                sheet = only_value
+            raise ValueError(f"Expected a JSON object, got {type(sheet).__name__}")
+        # Flatten nested "name" field (LLM sometimes returns {"name": {"nom_complet": ...}})
+        if isinstance(sheet.get("name"), dict):
+            name_dict = sheet["name"]
+            sheet["name"] = name_dict.get("nom_complet", name_dict.get("name", entity_name))
         sheet["name"] = entity_name
         sheet["entity_type"] = entity_type
         return sheet
@@ -447,6 +463,7 @@ async def generate_cosmogony(
 
     try:
         cosmo = extract_json(response)
+        cosmo = unwrap_llm_json(cosmo, expect_dict=True)
         if not isinstance(cosmo, dict):
             raise ValueError("Expected a JSON object")
         cosmo["race"] = race_name
@@ -503,16 +520,23 @@ async def _run_entity_extraction_iterative(
         logger.info("Found %d new entities at depth %d", len(new_entities), depth)
 
         # Generate sheets for each entity (sequential — Kimi detection was already done)
+        failed_sheets = []
         for entity in new_entities:
-            sheet = await generate_entity_sheet(entity, config, narrative_blocks)
+            try:
+                sheet = await generate_entity_sheet(entity, config, narrative_blocks)
+                entity_type = entity.get("type", "artefact")
+                block_key = f"entities_{entity_type}"
+                if block_key not in narrative_blocks:
+                    narrative_blocks[block_key] = []
+                narrative_blocks[block_key].append(sheet)
+                total_generated += 1
+            except Exception as e:
+                entity_name = entity.get("name", "?")
+                logger.error("Failed to generate sheet for '%s': %s: %s", entity_name, type(e).__name__, e)
+                failed_sheets.append({"name": entity_name, "type": entity.get("type"), "error": str(e)[:200]})
 
-            # Store in narrative_blocks under entities_<type>
-            entity_type = entity.get("type", "artefact")
-            block_key = f"entities_{entity_type}"
-            if block_key not in narrative_blocks:
-                narrative_blocks[block_key] = []
-            narrative_blocks[block_key].append(sheet)
-            total_generated += 1
+        if failed_sheets:
+            logger.warning("Entity sheet failures at depth %d: %d/%d failed", depth, len(failed_sheets), len(new_entities))
 
         # Generate cosmogonies for newly detected races
         races = narrative_blocks.get("entities_race", [])
@@ -526,11 +550,14 @@ async def _run_entity_extraction_iterative(
             if on_progress:
                 await on_progress(f"Génération des cosmogonies ({len(new_races)} races)")
             for race in new_races:
-                cosmo = await generate_cosmogony(race, config, narrative_blocks)
-                if "entities_cosmogonie" not in narrative_blocks:
-                    narrative_blocks["entities_cosmogonie"] = []
-                narrative_blocks["entities_cosmogonie"].append(cosmo)
-                total_generated += 1
+                try:
+                    cosmo = await generate_cosmogony(race, config, narrative_blocks)
+                    if "entities_cosmogonie" not in narrative_blocks:
+                        narrative_blocks["entities_cosmogonie"] = []
+                    narrative_blocks["entities_cosmogonie"].append(cosmo)
+                    total_generated += 1
+                except Exception as e:
+                    logger.error("Failed to generate cosmogony for '%s': %s", race.get("name", "?"), e)
 
     summary = {
         "total_generated": total_generated,
@@ -624,19 +651,30 @@ async def run_entity_extraction(
             logger.info("Found %d new entities for era '%s'", len(new_entities), era_name)
 
         # Generate sheets sequentially (Moonshot API does not support concurrent requests)
+        failed_sheets = []
         for entity in new_entities:
-            sheet = await generate_entity_sheet(entity, config, narrative_blocks)
+            try:
+                sheet = await generate_entity_sheet(entity, config, narrative_blocks)
+                entity_type = entity.get("type", "artefact")
+                block_key = f"entities_{entity_type}"
+                if block_key not in narrative_blocks:
+                    narrative_blocks[block_key] = []
+                narrative_blocks[block_key].append(sheet)
+                total_generated += 1
 
-            entity_type = entity.get("type", "artefact")
-            block_key = f"entities_{entity_type}"
-            if block_key not in narrative_blocks:
-                narrative_blocks[block_key] = []
-            narrative_blocks[block_key].append(sheet)
-            total_generated += 1
+                entity_name = entity.get("name", "")
+                if entity_name:
+                    all_detected_names.append(entity_name)
+            except Exception as e:
+                entity_name = entity.get("name", "?")
+                logger.error("Failed to generate sheet for '%s' in era '%s': %s", entity_name, era_name, e)
+                failed_sheets.append(entity_name)
+                # Still add the name to avoid re-detection
+                if entity.get("name"):
+                    all_detected_names.append(entity["name"])
 
-            entity_name = entity.get("name", "")
-            if entity_name:
-                all_detected_names.append(entity_name)
+        if failed_sheets:
+            logger.warning("Era '%s': %d/%d entity sheets failed: %s", era_name, len(failed_sheets), len(new_entities), failed_sheets)
 
         # Generate cosmogonies for newly detected races
         races = narrative_blocks.get("entities_race", [])
@@ -650,11 +688,14 @@ async def run_entity_extraction(
             if on_progress:
                 await on_progress(f"Génération des cosmogonies — {era_name} ({len(new_races)} races)")
             for race in new_races:
-                cosmo = await generate_cosmogony(race, config, narrative_blocks)
-                if "entities_cosmogonie" not in narrative_blocks:
-                    narrative_blocks["entities_cosmogonie"] = []
-                narrative_blocks["entities_cosmogonie"].append(cosmo)
-                total_generated += 1
+                try:
+                    cosmo = await generate_cosmogony(race, config, narrative_blocks)
+                    if "entities_cosmogonie" not in narrative_blocks:
+                        narrative_blocks["entities_cosmogonie"] = []
+                    narrative_blocks["entities_cosmogonie"].append(cosmo)
+                    total_generated += 1
+                except Exception as e:
+                    logger.error("Failed to generate cosmogony for '%s': %s", race.get("name", "?"), e)
 
         eras_processed += 1
 

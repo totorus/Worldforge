@@ -1,4 +1,4 @@
-from app.narrator.json_utils import extract_json
+from app.narrator.json_utils import extract_json, unwrap_llm_json
 """Naming module — generates proper names for characters using LLM."""
 
 import json
@@ -75,6 +75,7 @@ async def generate_names(config: dict, timeline: dict) -> dict[str, str]:
 
     try:
         names = extract_json(response)
+        names = unwrap_llm_json(names, expect_dict=True)
         if not isinstance(names, dict):
             raise ValueError("Expected a JSON object")
         return names
